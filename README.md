@@ -157,7 +157,7 @@ CODE_ENGINE_TIMEOUT_SECONDS=1800
 Положи репозиторий в `./workspace`:
 
 ```bash
-git clone git@github.com:org/project.git workspace
+git clone https://github.com/1day0fmylife/code_architect.git workspace
 ```
 
 Или замени volume в `docker-compose.yml` на путь к существующему проекту:
