@@ -7,14 +7,18 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agentpass}@postgres:5432/agent_memory
+      DATABASE_URL: postgres://agent:${POSTGRES_PASSWORD:-agentpass}@postgres:5432/agent_memory
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://ollama:11434
       LLAMACPP_BASE_URL: http://llamacpp:8080/v1
       WORKSPACE_DIR: /workspace
       AGENTS_CONFIG: /app/config/agents.yaml
+      WEB_AUTH_TOKEN: ${WEB_AUTH_TOKEN:?set WEB_AUTH_TOKEN in .env}
+      WEB_AUTH_DISABLED: ${WEB_AUTH_DISABLED:-false}
       REQUIRE_APPROVAL_FOR_CODE: ${REQUIRE_APPROVAL_FOR_CODE:-true}
       REQUIRE_APPROVAL_FOR_SHELL: ${REQUIRE_APPROVAL_FOR_SHELL:-true}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
     volumes:
       - ./workspace:/workspace
       - ./config:/app/config:ro
@@ -29,19 +33,6 @@ services:
         condition: service_started
     ports:
       - "8088:8088"
-
-  telegram-bot:
-    build: ./orchestrator
-    container_name: hermes-telegram
-    restart: unless-stopped
-    command: ["python", "-m", "app.telegram_bot"]
-    env_file: .env
-    environment:
-      BRAIN_URL: http://hermes-brain:8088
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
-    depends_on:
-      - hermes-brain
 
   postgres:
     image: pgvector/pgvector:pg16

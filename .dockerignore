@@ -1,0 +1,6 @@
+.git
+.env
+workspace
+models
+**/__pycache__
+**/*.pyc
