@@ -1,0 +1,318 @@
+# Hermes OpenCode Team: improvement plan
+
+Дата анализа: 2026-06-11
+
+## Краткое состояние
+
+Проект представляет собой ранний self-hosted каркас мультиагентной разработки:
+
+- FastAPI-сервис `hermes-brain` принимает задачи, запускает цепочку агентов и хранит события в Postgres.
+- Telegram-бот дает операторский интерфейс для `/task`, `/approve` и `/memory`.
+- Адаптеры LLM поддерживают Ollama и llama.cpp.
+- Кодовый исполнитель вызывает OpenCode или Codex CLI внутри контейнера и работает в смонтированном `/workspace`.
+- Конфигурация агентов вынесена в `config/agents.yaml`.
+- Docker Compose поднимает orchestrator, Telegram bot, Postgres с pgvector, Redis, Ollama и опциональный llama.cpp.
+
+Главный вывод: архитектура понятная и расширяемая, но проект пока ближе к прототипу. Самые важные зоны улучшения: безопасность исполнения кода, наблюдаемость, тесты, устойчивость workflow, управление схемой БД и полноценная память.
+
+## Оценка плана
+
+План в текущем виде пригоден как рабочий roadmap: он правильно ставит первыми проверяемость, approval/sandbox и перевод workflow в управляемое состояние. Это хорошая последовательность, потому что без тестов и модели approval опасно наращивать UI, память и интеграции.
+
+Что стоило усилить:
+
+- API security выделить отдельно от sandbox. Сейчас Telegram ограничивает пользователей, но FastAPI endpoints доступны без собственной аутентификации и авторизации.
+- Prompt-injection threat model. Проект запускает code agents по текстовым заданиям и памяти, поэтому нужно явно защищаться от инструкций из README, issue, logs и пользовательского workspace.
+- Disaster recovery. Для Postgres, workflow state, memory и audit log нужны backup/restore и retention policy.
+- Model operations. Нужны правила выбора моделей, fallback, лимиты стоимости/ресурсов, quality regression tests для агентских ответов.
+- Product boundary. Нужно заранее решить, что является MVP: Telegram-first operator loop или web UI-first workflow console.
+
+Обновленная рекомендация: ближайший фокус оставить на Foundation PR, но сразу включить туда API auth skeleton и threat-model документ. Это дешево сейчас и дорого переделывать позже.
+
+## Найденные риски и пробелы
+
+### 1. Безопасность исполнения
+
+- `/workflow/approve` принимает `agent`, `task` и `engine`, но не проверяет, что агент разрешен, задача связана с ранее созданным workflow, а оператор имеет право на запуск.
+- FastAPI API не имеет собственного auth layer; любой клиент с сетевым доступом к `8088` может вызвать workflow endpoints.
+- `REQUIRE_APPROVAL_FOR_SHELL` объявлен, но фактически не применяется.
+- OpenCode/Codex запускаются в контейнере, однако нет отдельной sandbox-политики для сети, shell-команд, путей записи, лимитов CPU/RAM и allowlist команд.
+- Ответ code engine возвращает stdout/stderr почти напрямую; возможна утечка секретов из логов.
+- Нет threat model для prompt injection, malicious repository content и tool-output injection.
+
+### 2. Надежность workflow
+
+- Workflow выполняется синхронно внутри HTTP-запроса. Длинные задачи могут упираться в таймауты клиента, Telegram или reverse proxy.
+- Нет статусов задач, очереди, отмены, retry и восстановления после падения сервиса.
+- Сводка зависит от финального LLM-вызова; если он падает, весь workflow может завершиться ошибкой после уже выполненных шагов.
+- `previous` и memory могут быстро разрастаться без token budgeting и summarization.
+
+### 3. Память и база данных
+
+- `scripts/init.sql` создает только расширение `vector`; таблицы создаются через `Base.metadata.create_all`.
+- Нет Alembic-миграций, версионирования схемы и индексов под реальные запросы.
+- pgvector заявлен как будущая возможность, но embeddings, retrieval и summary memory пока не реализованы.
+- Redis подключен в compose и settings, но не используется.
+
+### 4. Качество кода и тесты
+
+- Нет тестов, pytest-конфигурации, линтера, форматтера, type-checking и CI.
+- Нет контрактных тестов для API и unit-тестов для config expansion, memory, LLM adapters, approval flow.
+- FastAPI startup использует устаревающий `@app.on_event("startup")`; лучше перейти на lifespan.
+- Нет централизованной обработки ошибок и структурированных ответов для LLM/code-engine failures.
+
+### 5. Конфигурация и эксплуатация
+
+- `.env.example` есть, но пример пароля слабый и выглядит как реальное значение.
+- Нет health/readiness разделения: `/health` не проверяет Postgres, Redis, Ollama и доступность workspace.
+- Dockerfile ставит OpenCode/Codex через `npm install -g ... || true`; сбой установки скрывается до runtime.
+- Нет pinned npm package versions, SBOM или dependency scanning.
+
+### 6. UX оператора
+
+- Telegram-команды минимальны и не показывают прогресс по агентам.
+- Approval требует вручную повторять задачу, что повышает риск выполнить не тот prompt.
+- Нет веб-интерфейса, истории workflow, diff preview, approve/reject по конкретным proposed changes.
+
+### 7. Восстановление и lifecycle данных
+
+- Нет backup/restore процедуры для Postgres volume.
+- Нет retention policy для memory events, code engine logs и audit trails.
+- Нет разделения audit log и рабочей памяти: долгоживущие записи безопасности должны храниться иначе, чем prompt context.
+- Нет documented upgrade path для схемы БД и конфигурации агентов.
+
+### 8. Model operations
+
+- Нет оценки качества моделей на типовых задачах проекта.
+- Нет fallback-стратегии, если Ollama/llama.cpp недоступны или модель отвечает невалидно.
+- Нет лимитов на размер prompt, число шагов, повторные попытки и общий бюджет workflow.
+- Нет regression set для проверки, что изменения prompts/agents не ухудшают поведение.
+
+## Приоритетный план улучшений
+
+### Этап 1. Базовая надежность и проверяемость
+
+Цель: сделать прототип безопаснее менять и проще проверять.
+
+1. Добавить тестовый контур:
+   - `pytest`, `pytest-asyncio`, `respx` или `pytest-httpx`;
+   - unit-тесты для `config_loader`, `memory`, `llm.chat`, `run_workflow`;
+   - API smoke-тесты для `/health`, `/workflow/run`, `/workflow/approve`, `/memory/{session_id}`.
+2. Добавить качество кода:
+   - `ruff` для lint/format;
+   - `mypy` или `pyright` хотя бы в мягком режиме;
+   - `make test`, `make lint`, `make check`.
+3. Ввести CI:
+   - install dependencies;
+   - lint;
+   - tests;
+   - Docker build smoke.
+4. Улучшить error handling:
+   - явные ошибки для недоступного LLM/backend;
+   - HTTP 400/422 для неверного engine/agent;
+   - HTTP 502/504 для downstream failures/timeouts;
+   - безопасное логирование без секретов.
+5. Добавить минимальный API auth skeleton:
+   - bearer token или internal API key для `/workflow/*` и `/memory/*`;
+   - отдельная настройка для dev-mode без auth;
+   - тесты на protected endpoints.
+6. Зафиксировать threat model:
+   - trusted/untrusted boundaries;
+   - prompt injection в workspace files;
+   - secrets exposure через logs;
+   - network/file-system escape scenarios.
+
+Критерий готовности: локально и в CI проходит `make check`; основные API покрыты тестами.
+
+### Этап 2. Approval и sandbox
+
+Цель: превратить approval из текстовой договоренности в enforceable control.
+
+1. Ввести модель workflow run:
+   - `workflow_runs`;
+   - `agent_steps`;
+   - `approval_requests`;
+   - `code_engine_runs`.
+2. Approval должен ссылаться на конкретный `approval_request_id`, а не принимать произвольный новый task.
+3. Валидировать:
+   - agent входит в конфиг;
+   - engine входит в allowlist;
+   - session/run существует;
+   - approval еще не использован или явно разрешен repeat.
+4. Добавить sandbox policy:
+   - readonly mount для исходного repo до approval;
+   - отдельная рабочая ветка или копия workspace на task;
+   - allowlist путей записи;
+   - лимиты timeout/CPU/RAM;
+   - опциональное отключение network для code engine;
+   - redaction секретов в stdout/stderr.
+5. Сохранять diff и список измененных файлов после code-engine run.
+6. Добавить prompt hardening:
+   - system/developer instructions для code engine не должны смешиваться с untrusted repository content;
+   - явно маркировать memory, user task, repo snippets и tool output;
+   - запрещать агенту следовать инструкциям из workspace-файлов, если они противоречат operator policy.
+
+Критерий готовности: невозможно запустить произвольную approved-задачу вне созданного workflow; оператор видит diff/команды перед финальным принятием.
+
+### Этап 3. Асинхронный workflow engine
+
+Цель: убрать длинные операции из request/response и добавить управляемость.
+
+1. Использовать Redis как очередь или добавить легкий job runner:
+   - enqueue workflow;
+   - worker processes;
+   - status polling;
+   - retry с ограничениями;
+   - cancellation.
+2. API:
+   - `POST /workflow/run` возвращает `run_id`;
+   - `GET /workflow/{run_id}` возвращает статус, шаги, ошибки и summary;
+   - `POST /workflow/{run_id}/cancel`;
+   - `POST /approvals/{approval_id}/approve`.
+3. Telegram:
+   - показывать progress по агентам;
+   - approval кнопками или коротким approval id;
+   - команды `/status`, `/cancel`.
+
+Критерий готовности: длинный workflow не блокирует HTTP-клиента; состояние восстанавливается после рестарта сервиса.
+
+### Этап 4. База данных и память
+
+Цель: сделать память полезной и управляемой.
+
+1. Перейти с `Base.metadata.create_all` на Alembic.
+2. Создать миграции для:
+   - event memory;
+   - workflow runs;
+   - approvals;
+   - code engine runs;
+   - embeddings.
+3. Добавить memory layers:
+   - raw events;
+   - summarized session memory;
+   - vector embeddings по событиям/решениям;
+   - retrieval по текущей задаче.
+4. Добавить token budgeting:
+   - ограничение prompt context;
+   - rolling summaries;
+   - top-k retrieval через pgvector.
+5. Добавить lifecycle данных:
+   - retention для raw memory и code logs;
+   - отдельный immutable audit log;
+   - backup/restore runbook;
+   - smoke-test восстановления на пустой БД.
+
+Критерий готовности: агентам передается компактный релевантный контекст, а не последние N событий без учета смысла.
+
+### Этап 5. Observability и эксплуатация
+
+Цель: чтобы проект можно было поддерживать в реальной среде.
+
+1. Структурированные JSON-логи с `run_id`, `session_id`, `agent`, `step_id`.
+2. Метрики:
+   - latency LLM calls;
+   - latency code engine;
+   - success/failure by agent;
+   - queue depth;
+   - approval wait time.
+3. Health endpoints:
+   - `/health/live`;
+   - `/health/ready` с проверками Postgres, Redis, workspace, LLM backend.
+4. Docker hardening:
+   - non-root уже есть, сохранить;
+   - убрать `npm install ... || true` или вынести CLI в отдельный проверяемый слой;
+   - pin npm versions;
+   - добавить image build validation.
+5. Secret hygiene:
+   - улучшить `.env.example`;
+   - добавить documented secret redaction;
+   - не логировать env и prompts целиком по умолчанию.
+6. Model operations:
+   - fallback backend/model policy;
+   - per-workflow resource budget;
+   - small golden set задач для regression checks;
+   - metrics по качеству: accepted changes, failed runs, manual rework rate.
+
+Критерий готовности: по логам и метрикам можно понять, где сломался workflow, без доступа к контейнеру.
+
+### Этап 6. Operator UI и интеграции
+
+Цель: сделать управление удобным, а не только технически возможным.
+
+1. Добавить простой web UI:
+   - список runs;
+   - детали шагов;
+   - memory view;
+   - approval queue;
+   - diff preview;
+   - approve/reject.
+2. Git integration:
+   - branch-per-task;
+   - commit metadata с run_id;
+   - automatic PR draft;
+   - link PR обратно в workflow.
+3. Интеграции:
+   - GitHub/GitLab;
+   - Jira/Linear;
+   - MCP adapters;
+   - webhook callbacks.
+
+Критерий готовности: оператор может провести задачу от идеи до draft PR без ручного curl и копирования prompt.
+
+## Быстрые победы
+
+Эти задачи можно сделать первыми за короткое время:
+
+1. Добавить `make check` и минимальный pytest suite.
+2. Валидировать `agent` и `engine` в `/workflow/approve`.
+3. Разделить `/health/live` и `/health/ready`.
+4. Перейти на FastAPI lifespan.
+5. Добавить безопасную маскировку секретов в stdout/stderr.
+6. Сохранять `returncode != 0` как ошибочный статус, а не просто как поле результата.
+7. Добавить `.dockerignore`.
+8. Усилить `.env.example`: заменить демонстрационный пароль на `change-me`, добавить комментарии.
+9. Добавить простой bearer-token auth для API.
+10. Создать `docs/threat-model.md` для prompt injection, sandbox escape и secret leakage.
+
+## Предлагаемый порядок ближайшей реализации
+
+1. Foundation PR:
+   - pytest/ruff;
+   - `make check`;
+   - tests for config, API health, engine validation;
+   - minimal API auth skeleton;
+   - initial threat model document.
+2. API hardening PR:
+   - Pydantic validators/enums для `agent` и `engine`;
+   - централизованные ошибки;
+   - redaction helper.
+3. Runtime health PR:
+   - lifespan;
+   - readiness checks;
+   - Dockerfile install validation.
+4. Persistence PR:
+   - Alembic;
+   - workflow/approval/code-run tables.
+5. Async workflow PR:
+   - Redis-backed jobs;
+   - status endpoints;
+   - Telegram `/status`.
+6. Ops baseline PR:
+   - backup/restore runbook;
+   - retention settings;
+   - model fallback policy;
+   - regression prompts.
+
+## Definition of Done для production baseline
+
+- `make check` проходит локально и в CI.
+- Все внешние вызовы имеют timeout, typed errors и тесты на failure path.
+- Approval запускает только заранее созданные approval requests.
+- Code engine runs изолированы, логируются, имеют лимиты и redaction.
+- Workflow state хранится в БД и переживает рестарт.
+- Есть readiness endpoint и structured logs.
+- Есть минимальный операторский UX для статуса, approval и просмотра результатов.
+- API endpoints защищены хотя бы минимальной аутентификацией.
+- Есть threat model и documented mitigation для prompt injection.
+- Есть backup/restore процедура для Postgres-backed state.
+- Есть модельный regression set для базовых задач агентов.

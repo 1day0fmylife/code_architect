@@ -1,0 +1,96 @@
+name: hermes-opencode-team
+
+services:
+  hermes-brain:
+    build: ./orchestrator
+    container_name: hermes-brain
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agentpass}@postgres:5432/agent_memory
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLAMACPP_BASE_URL: http://llamacpp:8080/v1
+      WORKSPACE_DIR: /workspace
+      AGENTS_CONFIG: /app/config/agents.yaml
+      REQUIRE_APPROVAL_FOR_CODE: ${REQUIRE_APPROVAL_FOR_CODE:-true}
+      REQUIRE_APPROVAL_FOR_SHELL: ${REQUIRE_APPROVAL_FOR_SHELL:-true}
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/app/config:ro
+      - opencode-home:/home/agent/.local/share/opencode
+      - codex-home:/home/agent/.codex
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    ports:
+      - "8088:8088"
+
+  telegram-bot:
+    build: ./orchestrator
+    container_name: hermes-telegram
+    restart: unless-stopped
+    command: ["python", "-m", "app.telegram_bot"]
+    env_file: .env
+    environment:
+      BRAIN_URL: http://hermes-brain:8088
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
+    depends_on:
+      - hermes-brain
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agent_memory
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_memory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  llamacpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: llamacpp
+    restart: unless-stopped
+    profiles: ["llamacpp"]
+    command: ["-m", "/models/model.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "8192"]
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
+  ollama:
+  opencode-home:
+  codex-home:
