@@ -103,6 +103,17 @@ func TestHandleDeniesUnknownUser(t *testing.T) {
 		t.Fatalf("expected denied user not to run workflow, got task %q", engine.runTask)
 	}
 	requireLastMessage(t, client, "Access denied")
+	requireLastMessage(t, client, "user_id: 7")
+}
+
+func TestHandleWhoamiBypassesAllowlist(t *testing.T) {
+	client := &fakeHTTPClient{}
+	bot := testBot(&fakeEngine{}, fakeStore{}, client, map[int64]struct{}{42: {}})
+
+	bot.handle(context.Background(), testMessage(7, "/whoami"))
+
+	requireLastMessage(t, client, "user_id: 7")
+	requireLastMessage(t, client, "chat_id: 100")
 }
 
 func TestHandleTaskRunsWorkflow(t *testing.T) {

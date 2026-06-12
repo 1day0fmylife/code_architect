@@ -31,6 +31,7 @@ type Config struct {
 	WebAuthDisabled         bool
 	TelegramBotToken        string
 	TelegramAllowedUserIDs  map[int64]struct{}
+	TelegramDropPending     bool
 }
 
 type AgentsConfig struct {
@@ -76,6 +77,7 @@ func Load() (Config, error) {
 		WebAuthDisabled:         envBool("WEB_AUTH_DISABLED", false),
 		TelegramBotToken:        env("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAllowedUserIDs:  parseAllowedUsers(env("TELEGRAM_ALLOWED_USER_IDS", "")),
+		TelegramDropPending:     envBool("TELEGRAM_DROP_PENDING_UPDATES_ON_START", false),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("DATABASE_URL is required")

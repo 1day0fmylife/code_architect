@@ -89,6 +89,11 @@ func (b *Bot) Run(ctx context.Context) {
 	if err := b.deleteWebhook(ctx); err != nil {
 		slog.Warn("telegram deleteWebhook", "error", err)
 	}
+	slog.Info(
+		"telegram polling started",
+		"allowed_users_count", len(b.cfg.TelegramAllowedUserIDs),
+		"drop_pending_updates", b.cfg.TelegramDropPending,
+	)
 
 	var offset int64
 	for {
@@ -105,6 +110,12 @@ func (b *Bot) Run(ctx context.Context) {
 		}
 		for _, update := range updates {
 			offset = update.UpdateID + 1
+			slog.Info(
+				"telegram update received",
+				"update_id", update.UpdateID,
+				"has_message", update.Message != nil,
+				"has_callback", update.CallbackQuery != nil,
+			)
 
 			if update.CallbackQuery != nil {
 				go b.handleCallback(context.Background(), *update.CallbackQuery)
@@ -119,46 +130,59 @@ func (b *Bot) Run(ctx context.Context) {
 }
 
 func (b *Bot) handle(ctx context.Context, msg Message) {
-	if !b.allowed(msg.From.ID) {
-		_ = b.send(ctx, msg.Chat.ID, "Access denied", nil)
+	text := strings.TrimSpace(msg.Text)
+	if strings.HasPrefix(text, "/whoami") {
+		b.reply(ctx, msg.Chat.ID, fmt.Sprintf("user_id: %d\nchat_id: %d", msg.From.ID, msg.Chat.ID), menuKeyboard())
 		return
 	}
-	text := strings.TrimSpace(msg.Text)
+	if !b.allowed(msg.From.ID) {
+		b.reply(ctx, msg.Chat.ID, fmt.Sprintf("Access denied\nuser_id: %d\nchat_id: %d", msg.From.ID, msg.Chat.ID), nil)
+		return
+	}
+	command := text
+	if fields := strings.Fields(text); len(fields) > 0 {
+		command = fields[0]
+	}
+	slog.Info("telegram command", "command", command, "user_id", msg.From.ID, "chat_id", msg.Chat.ID)
 	switch {
 	case strings.HasPrefix(text, "/start"), strings.HasPrefix(text, "/menu"):
-		_ = b.sendMenu(ctx, msg.Chat.ID)
-	case strings.HasPrefix(text, "/help"):
-		_ = b.sendHelp(ctx, msg.Chat.ID)
+		b.replyMenu(ctx, msg.Chat.ID)
+	case strings.HasPrefix(text, "/help"), strings.HasPrefix(text, "/commands"):
+		b.replyHelp(ctx, msg.Chat.ID)
+	case strings.HasPrefix(text, "/model"):
+		b.reply(ctx, msg.Chat.ID, fmt.Sprintf("backend: %s\nmodel: %s", b.cfg.DefaultLLMBackend, b.cfg.DefaultModel), menuKeyboard())
+	case strings.HasPrefix(text, "/config"):
+		b.reply(ctx, msg.Chat.ID, fmt.Sprintf("code_engine: %s\nrequire_approval_for_code: %t\nworkspace: %s", b.cfg.CodeEngine, b.cfg.RequireApprovalForCode, b.cfg.WorkspaceDir), menuKeyboard())
 	case strings.HasPrefix(text, "/status"):
-		_ = b.sendStatus(ctx, msg.Chat.ID)
+		b.replyStatus(ctx, msg.Chat.ID)
 	case strings.HasPrefix(text, "/task"):
 		task := strings.TrimSpace(strings.TrimPrefix(text, "/task"))
 		if task == "" {
-			_ = b.send(ctx, msg.Chat.ID, "Usage: /task implement health endpoint", menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Usage: /task implement health endpoint", menuKeyboard())
 			return
 		}
-		_ = b.send(ctx, msg.Chat.ID, "Task accepted. Running agents...", nil)
+		b.reply(ctx, msg.Chat.ID, "Task accepted. Running agents...", nil)
 		result, err := b.engine.RunWorkflow(ctx, task, "", true)
 		if err != nil {
-			_ = b.send(ctx, msg.Chat.ID, "Workflow failed: "+err.Error(), menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Workflow failed: "+err.Error(), menuKeyboard())
 			return
 		}
-		_ = b.send(ctx, msg.Chat.ID, limit(fmt.Sprintf("session_id: %s\n\n%s", result.SessionID, result.Summary), 3500), menuKeyboard())
+		b.reply(ctx, msg.Chat.ID, limit(fmt.Sprintf("session_id: %s\n\n%s", result.SessionID, result.Summary), 3500), menuKeyboard())
 	case strings.HasPrefix(text, "/approve"):
 		rest := strings.TrimSpace(strings.TrimPrefix(text, "/approve"))
 		parts := strings.Fields(rest)
 		if len(parts) < 1 || len(parts) > 2 {
-			_ = b.send(ctx, msg.Chat.ID, "Usage: /approve <approval_id> [opencode|codex]", menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Usage: /approve <approval_id> [opencode|codex]", menuKeyboard())
 			return
 		}
-		_ = b.send(ctx, msg.Chat.ID, "Approval accepted. Running code engine...", nil)
+		b.reply(ctx, msg.Chat.ID, "Approval accepted. Running code engine...", nil)
 		engine := ""
 		if len(parts) == 2 {
 			engine = parts[1]
 		}
 		result, err := b.engine.ApproveApproval(ctx, parts[0], engine)
 		if err != nil {
-			_ = b.send(ctx, msg.Chat.ID, "Code engine failed: "+err.Error(), menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Code engine failed: "+err.Error(), menuKeyboard())
 			return
 		}
 		output := result.Stdout
@@ -174,16 +198,16 @@ func (b *Bot) handle(ctx context.Context, msg Message) {
 		if result.DiffStat != "" {
 			output += "\n\nDiff stat:\n" + result.DiffStat
 		}
-		_ = b.send(ctx, msg.Chat.ID, limit(output, 3500), menuKeyboard())
+		b.reply(ctx, msg.Chat.ID, limit(output, 3500), menuKeyboard())
 	case strings.HasPrefix(text, "/memory"):
 		sessionID := strings.TrimSpace(strings.TrimPrefix(text, "/memory"))
 		if sessionID == "" {
-			_ = b.send(ctx, msg.Chat.ID, "Usage: /memory <session_id>", menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Usage: /memory <session_id>", menuKeyboard())
 			return
 		}
 		events, err := b.store.Recall(ctx, sessionID, 10)
 		if err != nil {
-			_ = b.send(ctx, msg.Chat.ID, "Memory failed: "+err.Error(), menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "Memory failed: "+err.Error(), menuKeyboard())
 			return
 		}
 		lines := []string{}
@@ -191,63 +215,76 @@ func (b *Bot) handle(ctx context.Context, msg Message) {
 			lines = append(lines, fmt.Sprintf("%s: %s", event.Role, limit(event.Content, 300)))
 		}
 		if len(lines) == 0 {
-			_ = b.send(ctx, msg.Chat.ID, "No memory", menuKeyboard())
+			b.reply(ctx, msg.Chat.ID, "No memory", menuKeyboard())
 			return
 		}
-		_ = b.send(ctx, msg.Chat.ID, limit(strings.Join(lines, "\n"), 3500), menuKeyboard())
+		b.reply(ctx, msg.Chat.ID, limit(strings.Join(lines, "\n"), 3500), menuKeyboard())
 	default:
-		_ = b.send(ctx, msg.Chat.ID, "Use /menu or /task <text>", menuKeyboard())
+		b.reply(ctx, msg.Chat.ID, "Use /menu or /task <text>", menuKeyboard())
 	}
 }
 
 func (b *Bot) handleCallback(ctx context.Context, query CallbackQuery) {
-	_ = b.answerCallback(ctx, query.ID)
+	if err := b.answerCallback(ctx, query.ID); err != nil {
+		slog.Error("telegram answer callback failed", "error", err)
+	}
 	if !b.allowed(query.From.ID) {
-		_ = b.send(ctx, query.Message.Chat.ID, "Access denied", nil)
+		b.reply(ctx, query.Message.Chat.ID, "Access denied", nil)
 		return
 	}
+	slog.Info("telegram callback", "data", query.Data, "user_id", query.From.ID, "chat_id", query.Message.Chat.ID)
 
 	switch query.Data {
 	case "menu:main":
-		_ = b.sendMenu(ctx, query.Message.Chat.ID)
+		b.replyMenu(ctx, query.Message.Chat.ID)
 	case "help":
-		_ = b.sendHelp(ctx, query.Message.Chat.ID)
+		b.replyHelp(ctx, query.Message.Chat.ID)
 	case "task:prompt":
-		_ = b.send(ctx, query.Message.Chat.ID, "Send a task as:\n/task <description>", menuKeyboard())
+		b.reply(ctx, query.Message.Chat.ID, "Send a task as:\n/task <description>", menuKeyboard())
 	case "approve:prompt":
-		_ = b.send(ctx, query.Message.Chat.ID, "Run approved code changes as:\n/approve <approval_id> [opencode|codex]", menuKeyboard())
+		b.reply(ctx, query.Message.Chat.ID, "Run approved code changes as:\n/approve <approval_id> [opencode|codex]", menuKeyboard())
 	case "memory:prompt":
-		_ = b.send(ctx, query.Message.Chat.ID, "Read session memory as:\n/memory <session_id>", menuKeyboard())
+		b.reply(ctx, query.Message.Chat.ID, "Read session memory as:\n/memory <session_id>", menuKeyboard())
 	case "status:prompt":
-		_ = b.sendStatus(ctx, query.Message.Chat.ID)
+		b.replyStatus(ctx, query.Message.Chat.ID)
 	default:
-		_ = b.send(ctx, query.Message.Chat.ID, "Unknown menu action. Use /menu.", menuKeyboard())
+		b.reply(ctx, query.Message.Chat.ID, "Unknown menu action. Use /menu.", menuKeyboard())
 	}
 }
 
-func (b *Bot) sendMenu(ctx context.Context, chatID int64) error {
-	return b.send(ctx, chatID, "Hermes/OpenCode team ready. Choose an action or send a command.", menuKeyboard())
+func (b *Bot) reply(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) {
+	if err := b.send(ctx, chatID, text, keyboard); err != nil {
+		slog.Error("telegram sendMessage failed", "chat_id", chatID, "error", err)
+	}
 }
 
-func (b *Bot) sendHelp(ctx context.Context, chatID int64) error {
-	return b.send(ctx, chatID, strings.Join([]string{
+func (b *Bot) replyMenu(ctx context.Context, chatID int64) {
+	b.reply(ctx, chatID, "Hermes/OpenCode team ready. Choose an action or send a command.", menuKeyboard())
+}
+
+func (b *Bot) replyHelp(ctx context.Context, chatID int64) {
+	b.reply(ctx, chatID, strings.Join([]string{
 		"Supported commands:",
 		"/start - open main menu",
 		"/menu - open main menu",
 		"/help - show commands",
+		"/commands - show commands",
+		"/whoami - show Telegram user/chat ids",
 		"/status - show bot and database status",
+		"/model - show selected LLM backend/model",
+		"/config - show safe runtime config",
 		"/task <description> - run agent workflow",
 		"/approve <approval_id> [opencode|codex] - run an approved code engine task",
 		"/memory <session_id> - show recent session memory",
 	}, "\n"), menuKeyboard())
 }
 
-func (b *Bot) sendStatus(ctx context.Context, chatID int64) error {
+func (b *Bot) replyStatus(ctx context.Context, chatID int64) {
 	databaseStatus := "ok"
 	if err := b.store.Ping(ctx); err != nil {
 		databaseStatus = err.Error()
 	}
-	return b.send(ctx, chatID, fmt.Sprintf("Hermes Brain: running\nDatabase: %s", databaseStatus), menuKeyboard())
+	b.reply(ctx, chatID, fmt.Sprintf("Hermes Brain: running\nDatabase: %s", databaseStatus), menuKeyboard())
 }
 
 func menuKeyboard() *InlineKeyboardMarkup {
@@ -303,7 +340,7 @@ func (b *Bot) getUpdates(ctx context.Context, offset int64) ([]Update, error) {
 }
 
 func (b *Bot) deleteWebhook(ctx context.Context) error {
-	payload, err := json.Marshal(map[string]bool{"drop_pending_updates": false})
+	payload, err := json.Marshal(map[string]bool{"drop_pending_updates": b.cfg.TelegramDropPending})
 	if err != nil {
 		return err
 	}

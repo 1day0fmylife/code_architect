@@ -128,7 +128,11 @@ docker compose logs -f hermes-brain
 /start - открыть главное меню
 /menu - открыть главное меню
 /help - показать команды
+/commands - показать команды
+/whoami - показать Telegram user/chat id для настройки allowlist
 /status - показать состояние бота и БД
+/model - показать выбранный LLM backend/model
+/config - показать безопасную runtime-конфигурацию без секретов
 /task <описание задачи> - запустить workflow агентов
 /approve <approval_id> [opencode|codex] - выполнить approved code-engine задачу
 /memory <session_id> - показать последние события памяти
@@ -163,6 +167,16 @@ docker compose logs -f hermes-brain
 ```
 
 Проверь, что `hermes-brain` запущен, `TELEGRAM_BOT_TOKEN` не пустой, твой user id входит в `TELEGRAM_ALLOWED_USER_IDS`, а в логах нет ошибок Telegram API. При старте polling бот вызывает `deleteWebhook`, поэтому старый webhook не должен блокировать `getUpdates`.
+
+Если в логах есть `telegram sendMessage failed` с `chat not found`, значит `TELEGRAM_ALLOWED_USER_IDS` указывает не на chat/user id текущего диалога с этим ботом или пользователь еще не нажал Start в этом боте. Временно очисти `TELEGRAM_ALLOWED_USER_IDS`, пересоздай `hermes-brain`, отправь `/whoami`, затем верни показанный `user_id` в `.env`.
+
+Для принудительной очистки старой очереди апдейтов при старте можно разово включить:
+
+```env
+TELEGRAM_DROP_PENDING_UPDATES_ON_START=true
+```
+
+После успешной проверки лучше вернуть `false`, чтобы не терять команды оператора при рестарте.
 
 ## Web-консоль
 
