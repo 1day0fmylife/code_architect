@@ -18,9 +18,18 @@ type Event struct {
 
 type ApprovalRequest struct {
 	ID        string `json:"id"`
+	RunID     string `json:"run_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Agent     string `json:"agent"`
 	Task      string `json:"task"`
+	Status    string `json:"status"`
+}
+
+type WorkflowRun struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Task      string `json:"task"`
+	Summary   string `json:"summary,omitempty"`
 	Status    string `json:"status"`
 }
 
@@ -71,8 +80,21 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_session_id ON memory_events(session
 CREATE INDEX IF NOT EXISTS idx_memory_events_role ON memory_events(role);
 CREATE INDEX IF NOT EXISTS idx_memory_events_created_at ON memory_events(created_at);
 
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id VARCHAR(128) PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL,
+    task TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    status VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id ON workflow_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+
 CREATE TABLE IF NOT EXISTS approval_requests (
     id VARCHAR(128) PRIMARY KEY,
+    run_id VARCHAR(128),
     session_id VARCHAR(128) NOT NULL,
     agent VARCHAR(64) NOT NULL,
     task TEXT NOT NULL,
@@ -82,6 +104,8 @@ CREATE TABLE IF NOT EXISTS approval_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_approval_requests_session_id ON approval_requests(session_id);
 CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS run_id VARCHAR(128);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_run_id ON approval_requests(run_id);
 
 CREATE TABLE IF NOT EXISTS code_engine_runs (
     id BIGSERIAL PRIMARY KEY,
@@ -155,10 +179,10 @@ func (s *Store) SaveApproval(ctx context.Context, approval ApprovalRequest) erro
 		approval.Status = "pending"
 	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO approval_requests (id, session_id, agent, task, status)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO approval_requests (id, run_id, session_id, agent, task, status)
+VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6)
 ON CONFLICT (id) DO NOTHING`,
-		approval.ID, approval.SessionID, approval.Agent, approval.Task, approval.Status,
+		approval.ID, approval.RunID, approval.SessionID, approval.Agent, approval.Task, approval.Status,
 	)
 	return err
 }
@@ -169,9 +193,34 @@ func (s *Store) ConsumeApproval(ctx context.Context, id string) (ApprovalRequest
 UPDATE approval_requests
 SET status = 'used', consumed_at = now()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, session_id, agent, task, status`, id).
-		Scan(&approval.ID, &approval.SessionID, &approval.Agent, &approval.Task, &approval.Status)
+RETURNING id, COALESCE(run_id, ''), session_id, agent, task, status`, id).
+		Scan(&approval.ID, &approval.RunID, &approval.SessionID, &approval.Agent, &approval.Task, &approval.Status)
 	return approval, err
+}
+
+func (s *Store) SaveWorkflowRun(ctx context.Context, run WorkflowRun) error {
+	if run.Status == "" {
+		run.Status = "running"
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO workflow_runs (id, session_id, task, summary, status)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO UPDATE
+SET session_id = EXCLUDED.session_id,
+    task = EXCLUDED.task,
+    summary = EXCLUDED.summary,
+    status = EXCLUDED.status`,
+		run.ID, run.SessionID, run.Task, run.Summary, run.Status,
+	)
+	return err
+}
+
+func (s *Store) CompleteWorkflowRun(ctx context.Context, id, summary string) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE workflow_runs
+SET status = 'completed', summary = $2, completed_at = now()
+WHERE id = $1`, id, summary)
+	return err
 }
 
 func (s *Store) SaveCodeEngineRun(ctx context.Context, run CodeEngineRun) error {

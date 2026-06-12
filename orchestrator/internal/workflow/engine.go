@@ -32,6 +32,7 @@ type AgentResult struct {
 }
 
 type RunResult struct {
+	RunID     string        `json:"run_id"`
 	SessionID string        `json:"session_id"`
 	Summary   string        `json:"summary"`
 	Results   []AgentResult `json:"results"`
@@ -39,6 +40,7 @@ type RunResult struct {
 
 type ApprovalRequest struct {
 	ID        string `json:"id"`
+	RunID     string `json:"run_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Agent     string `json:"agent"`
 	Task      string `json:"task"`
@@ -71,6 +73,10 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 	if id == "" {
 		id = newSessionID()
 	}
+	runID := "run_" + newSessionID()
+	if err := e.saveWorkflowRun(ctx, runID, id, task); err != nil {
+		return RunResult{}, err
+	}
 	if err := e.memory.Remember(ctx, id, "user", task); err != nil {
 		return RunResult{}, err
 	}
@@ -98,7 +104,7 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 		result := AgentResult{Agent: name, Analysis: text}
 		if useCodeEngine && isCodeAgent(name) {
 			if e.cfg.RequireApprovalForCode {
-				approval, err := e.createApproval(ctx, id, name, approvedCodeTask(task, text))
+				approval, err := e.createApproval(ctx, runID, id, name, approvedCodeTask(task, text))
 				if err != nil {
 					return RunResult{}, err
 				}
@@ -127,7 +133,10 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 	if err := e.memory.Remember(ctx, id, "summary", summary); err != nil {
 		return RunResult{}, err
 	}
-	return RunResult{SessionID: id, Summary: summary, Results: results}, nil
+	if err := e.completeWorkflowRun(ctx, runID, summary); err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{RunID: runID, SessionID: id, Summary: summary, Results: results}, nil
 }
 
 func (e *Engine) ApproveApproval(ctx context.Context, approvalID, engine string) (codeengine.Result, error) {
@@ -202,9 +211,10 @@ func (e *Engine) saveCodeEngineRun(ctx context.Context, approvalID, sessionID, a
 	})
 }
 
-func (e *Engine) createApproval(ctx context.Context, sessionID, agentName, task string) (ApprovalRequest, error) {
+func (e *Engine) createApproval(ctx context.Context, runID, sessionID, agentName, task string) (ApprovalRequest, error) {
 	approval := ApprovalRequest{
 		ID:        "appr_" + newSessionID(),
+		RunID:     runID,
 		SessionID: sessionID,
 		Agent:     agentName,
 		Task:      task,
@@ -213,6 +223,7 @@ func (e *Engine) createApproval(ctx context.Context, sessionID, agentName, task 
 	if e.memory != nil {
 		err := e.memory.SaveApproval(ctx, memory.ApprovalRequest{
 			ID:        approval.ID,
+			RunID:     approval.RunID,
 			SessionID: approval.SessionID,
 			Agent:     approval.Agent,
 			Task:      approval.Task,
@@ -234,6 +245,7 @@ func (e *Engine) consumeApproval(ctx context.Context, id string) (ApprovalReques
 		}
 		return ApprovalRequest{
 			ID:        approval.ID,
+			RunID:     approval.RunID,
 			SessionID: approval.SessionID,
 			Agent:     approval.Agent,
 			Task:      approval.Task,
@@ -252,6 +264,25 @@ func (e *Engine) consumeApproval(ctx context.Context, id string) (ApprovalReques
 	approval.Status = "used"
 	e.approvals[id] = approval
 	return approval, nil
+}
+
+func (e *Engine) saveWorkflowRun(ctx context.Context, runID, sessionID, task string) error {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.SaveWorkflowRun(ctx, memory.WorkflowRun{
+		ID:        runID,
+		SessionID: sessionID,
+		Task:      task,
+		Status:    "running",
+	})
+}
+
+func (e *Engine) completeWorkflowRun(ctx context.Context, runID, summary string) error {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.CompleteWorkflowRun(ctx, runID, summary)
 }
 
 func (e *Engine) IsKnownAgent(name string) bool {

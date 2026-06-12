@@ -33,6 +33,7 @@
 - Approval requests сохраняются в Postgres и одноразово потребляются из `pending` в `used`.
 - Code engine result включает `changed_files` и `diff_stat` для git workspace.
 - Code engine runs сохраняются в Postgres вместе с approval/session/agent linkage.
+- Workflow runs получают `run_id` и сохраняются в Postgres как `running`/`completed`.
 - Threat model зафиксирован в `docs/threat-model.md`.
 - `/health/ready` проверяет Postgres, workspace и agents config.
 - `.env.example` и `.dockerignore` усилены для безопасного локального запуска и Docker build context.
@@ -158,10 +159,13 @@
    - `agent_steps`;
    - `approval_requests`;
    - `code_engine_runs`.
+   - `workflow_runs`, `approval_requests` и `code_engine_runs` уже созданы в Postgres-backed storage;
+   - следующий шаг: persisted `agent_steps`.
 2. Approval должен ссылаться на конкретный `approval_request_id`, а не принимать произвольный новый task.
    - `approval_id` уже добавлен;
    - approval state уже хранится в Postgres;
-   - следующий шаг: связать approval с persisted `workflow_runs` и `agent_steps`.
+   - approval уже связан с persisted `workflow_runs` через `run_id`;
+   - следующий шаг: связать approval с persisted `agent_steps`.
 3. Валидировать:
    - agent входит в конфиг;
    - engine входит в allowlist;

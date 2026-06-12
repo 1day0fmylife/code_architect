@@ -60,6 +60,8 @@ curl -X POST http://localhost:8088/workflow/run \
   -d '{"task":"Добавь Go/Echo endpoint /healthz и тесты", "use_code_engine": true}'
 ```
 
+Ответ `/workflow/run` содержит `run_id` и `session_id`. `run_id` сохраняется в Postgres в `workflow_runs` и связывает последующие approval/code-engine records.
+
 По умолчанию `REQUIRE_APPROVAL_FOR_CODE=true`, поэтому backend/frontend/security/QA только подготовят план и вернут `approval_id`. Для запуска кодового агента используй этот `approval_id`:
 
 ```bash
@@ -287,6 +289,7 @@ codex exec <prompt>
 ## Security defaults
 
 - HTTP workflow API защищен bearer token из `WEB_AUTH_TOKEN`.
+- Workflow runs, approval requests и code engine runs хранятся в Postgres.
 - Кодовые изменения требуют явного `/approve`.
 - `approval_id` хранится в Postgres и одноразово переводится из `pending` в `used`.
 - Telegram ограничивается `TELEGRAM_ALLOWED_USER_IDS`.
@@ -294,7 +297,6 @@ codex exec <prompt>
 - OpenCode/Codex запускаются внутри контейнера.
 - stdout/stderr code engine проходят базовую redaction-маскировку токенов и паролей.
 - Ответ code engine включает список измененных файлов и `git diff --stat`, когда workspace является git-репозиторием.
-- Approval requests и code engine runs хранятся в Postgres.
 - Базовая threat model описана в `docs/threat-model.md`.
 - Секреты не хранятся в памяти явно; не передавай `.env` и токены в задачи.
 

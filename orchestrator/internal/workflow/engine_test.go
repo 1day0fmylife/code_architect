@@ -8,7 +8,7 @@ import (
 
 func TestConsumeApprovalCanOnlyBeUsedOnce(t *testing.T) {
 	engine := &Engine{approvals: map[string]ApprovalRequest{}}
-	approval, err := engine.createApproval(context.Background(), "session-1", "backend", "approved task")
+	approval, err := engine.createApproval(context.Background(), "run-1", "session-1", "backend", "approved task")
 	if err != nil {
 		t.Fatalf("create approval: %v", err)
 	}
@@ -17,7 +17,7 @@ func TestConsumeApprovalCanOnlyBeUsedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consume approval: %v", err)
 	}
-	if got.SessionID != "session-1" || got.Agent != "backend" || got.Task != "approved task" {
+	if got.RunID != "run-1" || got.SessionID != "session-1" || got.Agent != "backend" || got.Task != "approved task" {
 		t.Fatalf("unexpected approval: %#v", got)
 	}
 
@@ -35,7 +35,7 @@ func TestApproveApprovalRejectsUnsupportedEngineWithoutConsuming(t *testing.T) {
 		allowedCode: map[string]struct{}{"opencode": {}, "codex": {}},
 		approvals:   map[string]ApprovalRequest{},
 	}
-	approval, err := engine.createApproval(context.Background(), "session-1", "backend", "approved task")
+	approval, err := engine.createApproval(context.Background(), "run-1", "session-1", "backend", "approved task")
 	if err != nil {
 		t.Fatalf("create approval: %v", err)
 	}
