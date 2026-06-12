@@ -11,16 +11,27 @@ import (
 	"github.com/labstack/echo/v5/middleware"
 
 	"hermes-opencode-team/orchestrator/internal/auth"
+	"hermes-opencode-team/orchestrator/internal/codeengine"
 	"hermes-opencode-team/orchestrator/internal/config"
 	"hermes-opencode-team/orchestrator/internal/memory"
 	"hermes-opencode-team/orchestrator/internal/workflow"
 )
 
+type MemoryStore interface {
+	Ping(ctx context.Context) error
+	Recall(ctx context.Context, sessionID string, limit int) ([]memory.Event, error)
+}
+
+type WorkflowEngine interface {
+	RunWorkflow(ctx context.Context, task, sessionID string, useCodeEngine bool) (workflow.RunResult, error)
+	ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error)
+}
+
 type Server struct {
 	echo    *echo.Echo
 	cfg     config.Config
-	store   *memory.Store
-	engine  *workflow.Engine
+	store   MemoryStore
+	engine  WorkflowEngine
 	ctx     context.Context
 	cancel  context.CancelFunc
 	started bool
@@ -39,7 +50,7 @@ type ApproveRequest struct {
 	Engine    string `json:"engine"`
 }
 
-func NewServer(cfg config.Config, store *memory.Store, engine *workflow.Engine) *Server {
+func NewServer(cfg config.Config, store MemoryStore, engine WorkflowEngine) *Server {
 	e := echo.New()
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())

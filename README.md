@@ -38,6 +38,8 @@ docker compose up -d --build
 docker compose exec ollama ollama pull qwen2.5-coder:7b
 ```
 
+По умолчанию наружу публикуется только `hermes-brain` на `8088`. Postgres, Redis, Ollama и llama.cpp доступны сервисам внутри Docker network; если нужен доступ с хоста, добавь нужные `ports` в `docker-compose.yml`.
+
 Проверка live/readiness:
 
 ```bash
@@ -80,14 +82,37 @@ WEB_AUTH_DISABLED=true
 
 ## Telegram
 
-В `.env`:
+Telegram polling встроен в `hermes-brain`: отдельный bot service запускать не нужно.
+
+1. Создай бота в Telegram:
+   - открой `@BotFather`;
+   - выполни `/newbot`;
+   - задай имя и username;
+   - скопируй bot token в `TELEGRAM_BOT_TOKEN`.
+2. Узнай свой Telegram user id:
+   - напиши любому id-боту, например `@userinfobot`;
+   - скопируй числовой id в `TELEGRAM_ALLOWED_USER_IDS`.
+3. Заполни `.env`:
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:replace-me
 TELEGRAM_ALLOWED_USER_IDS=123456789
 ```
 
+Несколько операторов можно указать через запятую:
+
+```env
+TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
+```
+
 Если `TELEGRAM_BOT_TOKEN` пустой, Telegram-интеграция не запускается. Если `TELEGRAM_ALLOWED_USER_IDS` пустой, бот принимает команды от любого пользователя, что подходит только для локального стенда.
+
+После изменения `.env` пересоздай контейнер:
+
+```bash
+docker compose up -d --build hermes-brain
+docker compose logs -f hermes-brain
+```
 
 Команды:
 
@@ -99,6 +124,14 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 ```
 
 Telegram-команды вызывают workflow напрямую внутри `hermes-brain`, поэтому `WEB_AUTH_TOKEN` нужен только для HTTP API.
+
+Быстрая проверка:
+
+1. Напиши боту `/start`.
+2. Отправь `/task Проверь структуру проекта и предложи следующий шаг`.
+3. Если задача требует кода, возьми `session_id` из ответа и выполни `/approve <session_id> backend <конкретная разрешенная задача>`.
+
+Не добавляй bot token в задачи, prompt, issue или сообщения агентам: code engine stdout/stderr маскируется частично, но секреты лучше не передавать в workflow вообще.
 
 ## Go-разработка
 
@@ -203,7 +236,20 @@ DEFAULT_MODEL=local-model
 
 ## OpenCode/Codex
 
-В контейнере сделана best-effort установка CLI через npm. Если конкретный CLI изменил имя пакета или режим non-interactive, задай бинарь явно:
+В Docker image CLI ставятся через npm:
+
+```text
+npm install -g opencode-ai @openai/codex
+```
+
+Проверить наличие бинарей можно так:
+
+```bash
+docker run --rm hermes-opencode-team-hermes-brain:latest \
+  sh -lc 'command -v opencode && command -v codex'
+```
+
+Если нужно закрепить свою версию CLI или конкретный путь, задай бинарь явно:
 
 ```env
 CODE_ENGINE=opencode

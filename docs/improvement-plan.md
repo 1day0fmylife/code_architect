@@ -1,27 +1,44 @@
 # Hermes OpenCode Team: improvement plan
 
 Дата анализа: 2026-06-11
+Последнее обновление: 2026-06-12
 
 ## Краткое состояние
 
 Проект представляет собой ранний self-hosted каркас мультиагентной разработки:
 
-- FastAPI-сервис `hermes-brain` принимает задачи, запускает цепочку агентов и хранит события в Postgres.
+- Go/Echo v5-сервис `hermes-brain` принимает задачи, запускает цепочку агентов и хранит события в Postgres.
 - Telegram-бот дает операторский интерфейс для `/task`, `/approve` и `/memory`.
 - Адаптеры LLM поддерживают Ollama и llama.cpp.
 - Кодовый исполнитель вызывает OpenCode или Codex CLI внутри контейнера и работает в смонтированном `/workspace`.
 - Конфигурация агентов вынесена в `config/agents.yaml`.
 - Docker Compose поднимает orchestrator, Telegram bot, Postgres с pgvector, Redis, Ollama и опциональный llama.cpp.
+- Web/API endpoints защищены bearer token, кроме health endpoints; dev-mode без auth управляется явной настройкой.
 
 Главный вывод: архитектура понятная и расширяемая, но проект пока ближе к прототипу. Самые важные зоны улучшения: безопасность исполнения кода, наблюдаемость, тесты, устойчивость workflow, управление схемой БД и полноценная память.
 
+## Уже выполнено
+
+- Orchestrator перенесен на Go/Echo v5.
+- Добавлен bearer auth middleware для web/API endpoints.
+- Telegram polling и команды `/task`, `/approve`, `/memory` перенесены в Go-service.
+- OpenCode/Codex CLI устанавливаются в Docker image через `npm install -g opencode-ai @openai/codex`.
+- Dockerfile больше не скрывает ошибку установки code-engine CLI.
+- Добавлен минимальный тестовый контур Go:
+  - auth middleware;
+  - config/env loading;
+  - HTTP API auth/validation/health contract.
+  - Telegram command handling and allowlist checks.
+- `make check` запускает `gofmt`-проверку, `go vet` и Go-тесты.
+- В compose наружу публикуется только `hermes-brain:8088`; инфраструктурные сервисы остаются внутри Docker network.
+
 ## Оценка плана
 
-План в текущем виде пригоден как рабочий roadmap: он правильно ставит первыми проверяемость, approval/sandbox и перевод workflow в управляемое состояние. Это хорошая последовательность, потому что без тестов и модели approval опасно наращивать UI, память и интеграции.
+План в текущем виде пригоден как рабочий roadmap: он правильно ставит первыми проверяемость, approval/sandbox и перевод workflow в управляемое состояние. После переноса на Go ближайший акцент смещается с миграции runtime на формализацию контрактов: API schema, approval model, async workflow state и тестируемая Telegram-интеграция.
 
 Что стоило усилить:
 
-- API security выделить отдельно от sandbox. Сейчас Telegram ограничивает пользователей, но FastAPI endpoints доступны без собственной аутентификации и авторизации.
+- API security выделить отдельно от sandbox. Bearer auth уже есть, но нужны роли, audit log, token rotation и отдельная модель прав для web/Telegram.
 - Prompt-injection threat model. Проект запускает code agents по текстовым заданиям и памяти, поэтому нужно явно защищаться от инструкций из README, issue, logs и пользовательского workspace.
 - Disaster recovery. Для Postgres, workflow state, memory и audit log нужны backup/restore и retention policy.
 - Model operations. Нужны правила выбора моделей, fallback, лимиты стоимости/ресурсов, quality regression tests для агентских ответов.
@@ -34,7 +51,7 @@
 ### 1. Безопасность исполнения
 
 - `/workflow/approve` принимает `agent`, `task` и `engine`, но не проверяет, что агент разрешен, задача связана с ранее созданным workflow, а оператор имеет право на запуск.
-- FastAPI API не имеет собственного auth layer; любой клиент с сетевым доступом к `8088` может вызвать workflow endpoints.
+- API имеет bearer auth, но пока нет ролевой модели, scoped tokens, expiration и audit trail.
 - `REQUIRE_APPROVAL_FOR_SHELL` объявлен, но фактически не применяется.
 - OpenCode/Codex запускаются в контейнере, однако нет отдельной sandbox-политики для сети, shell-команд, путей записи, лимитов CPU/RAM и allowlist команд.
 - Ответ code engine возвращает stdout/stderr почти напрямую; возможна утечка секретов из логов.
@@ -56,16 +73,16 @@
 
 ### 4. Качество кода и тесты
 
-- Нет тестов, pytest-конфигурации, линтера, форматтера, type-checking и CI.
-- Нет контрактных тестов для API и unit-тестов для config expansion, memory, LLM adapters, approval flow.
-- FastAPI startup использует устаревающий `@app.on_event("startup")`; лучше перейти на lifespan.
+- Базовые Go-тесты есть, но покрытие пока минимальное.
+- Нет контрактных тестов для memory, LLM adapters, code engine и persisted approval flow.
+- Нет линтера, форматтера и CI для Go-модуля.
 - Нет централизованной обработки ошибок и структурированных ответов для LLM/code-engine failures.
 
 ### 5. Конфигурация и эксплуатация
 
 - `.env.example` есть, но пример пароля слабый и выглядит как реальное значение.
 - Нет health/readiness разделения: `/health` не проверяет Postgres, Redis, Ollama и доступность workspace.
-- Dockerfile ставит OpenCode/Codex через `npm install -g ... || true`; сбой установки скрывается до runtime.
+- Dockerfile ставит OpenCode/Codex строго, но версии npm-пакетов пока не закреплены.
 - Нет pinned npm package versions, SBOM или dependency scanning.
 
 ### 6. UX оператора
@@ -95,12 +112,12 @@
 Цель: сделать прототип безопаснее менять и проще проверять.
 
 1. Добавить тестовый контур:
-   - `pytest`, `pytest-asyncio`, `respx` или `pytest-httpx`;
-   - unit-тесты для `config_loader`, `memory`, `llm.chat`, `run_workflow`;
+   - unit-тесты для `config`, `memory`, `llm.Client`, `workflow.Engine`;
    - API smoke-тесты для `/health`, `/workflow/run`, `/workflow/approve`, `/memory/{session_id}`.
 2. Добавить качество кода:
-   - `ruff` для lint/format;
-   - `mypy` или `pyright` хотя бы в мягком режиме;
+   - `gofmt`;
+   - `go vet`;
+   - `staticcheck` или аналогичный Go-linter;
    - `make test`, `make lint`, `make check`.
 3. Ввести CI:
    - install dependencies;
@@ -113,16 +130,17 @@
    - HTTP 502/504 для downstream failures/timeouts;
    - безопасное логирование без секретов.
 5. Добавить минимальный API auth skeleton:
-   - bearer token или internal API key для `/workflow/*` и `/memory/*`;
-   - отдельная настройка для dev-mode без auth;
-   - тесты на protected endpoints.
+   - bearer token для `/workflow/*` и `/memory/*` уже добавлен;
+   - отдельная настройка для dev-mode без auth уже добавлена;
+   - тесты на protected endpoints уже добавлены;
+   - следующий шаг: роли/scopes для web operator, Telegram operator и internal service calls.
 6. Зафиксировать threat model:
    - trusted/untrusted boundaries;
    - prompt injection в workspace files;
    - secrets exposure через logs;
    - network/file-system escape scenarios.
 
-Критерий готовности: локально и в CI проходит `make check`; основные API покрыты тестами.
+Критерий готовности: локально и в CI проходит `make check`; основные API покрыты тестами; README описывает Go/Echo runtime и auth.
 
 ### Этап 2. Approval и sandbox
 

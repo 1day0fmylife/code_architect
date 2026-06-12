@@ -13,10 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 agent
 
-# OpenCode/Codex are intentionally best-effort because package names and
-# non-interactive modes may differ between releases. Override OPENCODE_BIN or
-# CODEX_BIN when mounting a known-good binary.
-RUN npm install -g opencode-ai @openai/codex || true
+# OpenCode/Codex CLI are required by the code engine runners.
+RUN npm install -g opencode-ai @openai/codex
 
 WORKDIR /app
 COPY --from=builder /out/hermes /app/hermes

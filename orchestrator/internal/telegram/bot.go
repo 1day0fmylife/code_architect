@@ -11,16 +11,30 @@ import (
 	"strings"
 	"time"
 
+	"hermes-opencode-team/orchestrator/internal/codeengine"
 	"hermes-opencode-team/orchestrator/internal/config"
 	"hermes-opencode-team/orchestrator/internal/memory"
 	"hermes-opencode-team/orchestrator/internal/workflow"
 )
 
+type WorkflowEngine interface {
+	RunWorkflow(ctx context.Context, task, sessionID string, useCodeEngine bool) (workflow.RunResult, error)
+	ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error)
+}
+
+type MemoryStore interface {
+	Recall(ctx context.Context, sessionID string, limit int) ([]memory.Event, error)
+}
+
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 type Bot struct {
 	cfg    config.Config
-	engine *workflow.Engine
-	store  *memory.Store
-	client *http.Client
+	engine WorkflowEngine
+	store  MemoryStore
+	client HTTPClient
 }
 
 type updateResponse struct {
