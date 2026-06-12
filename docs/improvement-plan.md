@@ -29,6 +29,7 @@
   - config/env loading;
   - HTTP API auth/validation/health contract.
   - Telegram command handling and allowlist checks.
+- Approval flow теперь выдает `approval_id`, а HTTP/Telegram approve используют его вместо произвольного повторного task.
 - `make check` запускает `gofmt`-проверку, `go vet` и Go-тесты.
 - В compose наружу публикуется только `hermes-brain:8088`; инфраструктурные сервисы остаются внутри Docker network.
 
@@ -152,6 +153,8 @@
    - `approval_requests`;
    - `code_engine_runs`.
 2. Approval должен ссылаться на конкретный `approval_request_id`, а не принимать произвольный новый task.
+   - временный in-memory `approval_id` уже добавлен;
+   - следующий шаг: перенести approval state в Postgres и восстановление после рестарта.
 3. Валидировать:
    - agent входит в конфиг;
    - engine входит в allowlist;

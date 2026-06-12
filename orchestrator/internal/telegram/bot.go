@@ -19,7 +19,7 @@ import (
 
 type WorkflowEngine interface {
 	RunWorkflow(ctx context.Context, task, sessionID string, useCodeEngine bool) (workflow.RunResult, error)
-	ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error)
+	ApproveApproval(ctx context.Context, approvalID, engine string) (codeengine.Result, error)
 }
 
 type MemoryStore interface {
@@ -98,7 +98,7 @@ func (b *Bot) handle(ctx context.Context, msg Message) {
 	text := strings.TrimSpace(msg.Text)
 	switch {
 	case strings.HasPrefix(text, "/start"):
-		_ = b.send(ctx, msg.Chat.ID, "Hermes/OpenCode team ready. Use /task <text>, /approve <session_id> <agent> <task>, /memory <session_id>.")
+		_ = b.send(ctx, msg.Chat.ID, "Hermes/OpenCode team ready. Use /task <text>, /approve <approval_id> [engine], /memory <session_id>.")
 	case strings.HasPrefix(text, "/task"):
 		task := strings.TrimSpace(strings.TrimPrefix(text, "/task"))
 		if task == "" {
@@ -114,13 +114,17 @@ func (b *Bot) handle(ctx context.Context, msg Message) {
 		_ = b.send(ctx, msg.Chat.ID, limit(fmt.Sprintf("session_id: %s\n\n%s", result.SessionID, result.Summary), 3500))
 	case strings.HasPrefix(text, "/approve"):
 		rest := strings.TrimSpace(strings.TrimPrefix(text, "/approve"))
-		parts := strings.SplitN(rest, " ", 3)
-		if len(parts) < 3 {
-			_ = b.send(ctx, msg.Chat.ID, "Usage: /approve <session_id> <agent> <task>")
+		parts := strings.Fields(rest)
+		if len(parts) < 1 || len(parts) > 2 {
+			_ = b.send(ctx, msg.Chat.ID, "Usage: /approve <approval_id> [opencode|codex]")
 			return
 		}
 		_ = b.send(ctx, msg.Chat.ID, "Approval accepted. Running code engine...")
-		result, err := b.engine.ApproveAgentTask(ctx, parts[0], parts[1], parts[2], "")
+		engine := ""
+		if len(parts) == 2 {
+			engine = parts[1]
+		}
+		result, err := b.engine.ApproveApproval(ctx, parts[0], engine)
 		if err != nil {
 			_ = b.send(ctx, msg.Chat.ID, "Code engine failed: "+err.Error())
 			return

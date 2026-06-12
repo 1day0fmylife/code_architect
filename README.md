@@ -58,13 +58,13 @@ curl -X POST http://localhost:8088/workflow/run \
   -d '{"task":"Добавь Go/Echo endpoint /healthz и тесты", "use_code_engine": true}'
 ```
 
-По умолчанию `REQUIRE_APPROVAL_FOR_CODE=true`, поэтому backend/frontend/security/QA только подготовят план. Для запуска кодового агента:
+По умолчанию `REQUIRE_APPROVAL_FOR_CODE=true`, поэтому backend/frontend/security/QA только подготовят план и вернут `approval_id`. Для запуска кодового агента используй этот `approval_id`:
 
 ```bash
 curl -X POST http://localhost:8088/workflow/approve \
   -H "Authorization: Bearer $HERMES_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"session_id":"<session_id>","agent":"backend","task":"Реализуй endpoint /healthz и тесты","engine":"opencode"}'
+  -d '{"approval_id":"<approval_id>","engine":"opencode"}'
 ```
 
 Просмотр памяти:
@@ -119,7 +119,7 @@ docker compose logs -f hermes-brain
 ```text
 /start
 /task <описание задачи>
-/approve <session_id> <agent> <задача>
+/approve <approval_id> [opencode|codex]
 /memory <session_id>
 ```
 
@@ -129,7 +129,7 @@ Telegram-команды вызывают workflow напрямую внутри 
 
 1. Напиши боту `/start`.
 2. Отправь `/task Проверь структуру проекта и предложи следующий шаг`.
-3. Если задача требует кода, возьми `session_id` из ответа и выполни `/approve <session_id> backend <конкретная разрешенная задача>`.
+3. Если задача требует кода, возьми `approval_id` из ответа и выполни `/approve <approval_id>`.
 
 Не добавляй bot token в задачи, prompt, issue или сообщения агентам: code engine stdout/stderr маскируется частично, но секреты лучше не передавать в workflow вообще.
 

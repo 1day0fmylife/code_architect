@@ -29,10 +29,12 @@ func (f fakeStore) Recall(context.Context, string, int) ([]memory.Event, error) 
 }
 
 type fakeEngine struct {
-	runTask       string
-	runSessionID  string
-	runCodeEngine bool
-	runErr        error
+	runTask        string
+	runSessionID   string
+	runCodeEngine  bool
+	approvalID     string
+	approvalEngine string
+	runErr         error
 }
 
 func (f *fakeEngine) RunWorkflow(_ context.Context, task, sessionID string, useCodeEngine bool) (workflow.RunResult, error) {
@@ -47,6 +49,12 @@ func (f *fakeEngine) RunWorkflow(_ context.Context, task, sessionID string, useC
 
 func (f *fakeEngine) ApproveAgentTask(context.Context, string, string, string, string) (codeengine.Result, error) {
 	return codeengine.Result{Status: "ok"}, nil
+}
+
+func (f *fakeEngine) ApproveApproval(_ context.Context, approvalID, engine string) (codeengine.Result, error) {
+	f.approvalID = approvalID
+	f.approvalEngine = engine
+	return codeengine.Result{Status: "ok", Engine: engine}, nil
 }
 
 func TestHealthLiveIsPublic(t *testing.T) {
@@ -120,6 +128,41 @@ func TestWorkflowRunPassesAuthenticatedRequest(t *testing.T) {
 	}
 	if body["summary"] != "done" {
 		t.Fatalf("expected summary response, got %#v", body)
+	}
+}
+
+func TestWorkflowApproveRequiresApprovalID(t *testing.T) {
+	s := newTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/workflow/approve", strings.NewReader(`{"session_id":"session-1","agent":"backend","task":"do it"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkflowApproveUsesApprovalID(t *testing.T) {
+	engine := &fakeEngine{}
+	s := NewServer(testConfig(), fakeStore{}, engine)
+	req := httptest.NewRequest(http.MethodPost, "/workflow/approve", strings.NewReader(`{
+		"approval_id": "appr_123",
+		"engine": "codex"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if engine.approvalID != "appr_123" || engine.approvalEngine != "codex" {
+		t.Fatalf("unexpected approval call: id=%q engine=%q", engine.approvalID, engine.approvalEngine)
 	}
 }
 

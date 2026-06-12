@@ -24,7 +24,7 @@ type MemoryStore interface {
 
 type WorkflowEngine interface {
 	RunWorkflow(ctx context.Context, task, sessionID string, useCodeEngine bool) (workflow.RunResult, error)
-	ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error)
+	ApproveApproval(ctx context.Context, approvalID, engine string) (codeengine.Result, error)
 }
 
 type Server struct {
@@ -44,10 +44,8 @@ type TaskRequest struct {
 }
 
 type ApproveRequest struct {
-	SessionID string `json:"session_id"`
-	Agent     string `json:"agent"`
-	Task      string `json:"task"`
-	Engine    string `json:"engine"`
+	ApprovalID string `json:"approval_id"`
+	Engine     string `json:"engine"`
 }
 
 func NewServer(cfg config.Config, store MemoryStore, engine WorkflowEngine) *Server {
@@ -130,13 +128,11 @@ func (s *Server) workflowApprove(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	req.SessionID = strings.TrimSpace(req.SessionID)
-	req.Agent = strings.TrimSpace(req.Agent)
-	req.Task = strings.TrimSpace(req.Task)
-	if req.SessionID == "" || req.Agent == "" || req.Task == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "session_id, agent and task are required")
+	req.ApprovalID = strings.TrimSpace(req.ApprovalID)
+	if req.ApprovalID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "approval_id is required")
 	}
-	result, err := s.engine.ApproveAgentTask(c.Request().Context(), req.SessionID, req.Agent, req.Task, strings.TrimSpace(req.Engine))
+	result, err := s.engine.ApproveApproval(c.Request().Context(), req.ApprovalID, strings.TrimSpace(req.Engine))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}

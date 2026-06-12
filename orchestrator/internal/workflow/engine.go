@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+	"sync"
 
 	"hermes-opencode-team/orchestrator/internal/codeengine"
 	"hermes-opencode-team/orchestrator/internal/config"
@@ -20,6 +21,8 @@ type Engine struct {
 	code        codeengine.Runner
 	agentNames  map[string]struct{}
 	allowedCode map[string]struct{}
+	approvals   map[string]ApprovalRequest
+	mu          sync.Mutex
 }
 
 type AgentResult struct {
@@ -32,6 +35,14 @@ type RunResult struct {
 	SessionID string        `json:"session_id"`
 	Summary   string        `json:"summary"`
 	Results   []AgentResult `json:"results"`
+}
+
+type ApprovalRequest struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	Task      string `json:"task"`
+	Status    string `json:"status"`
 }
 
 func NewEngine(cfg config.Config, store *memory.Store) (*Engine, error) {
@@ -51,6 +62,7 @@ func NewEngine(cfg config.Config, store *memory.Store) (*Engine, error) {
 		code:        codeengine.NewRunner(cfg),
 		agentNames:  names,
 		allowedCode: map[string]struct{}{"opencode": {}, "codex": {}},
+		approvals:   map[string]ApprovalRequest{},
 	}, nil
 }
 
@@ -86,9 +98,11 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 		result := AgentResult{Agent: name, Analysis: text}
 		if useCodeEngine && isCodeAgent(name) {
 			if e.cfg.RequireApprovalForCode {
+				approval := e.createApproval(id, name, approvedCodeTask(task, text))
 				result.CodeEngine = map[string]string{
 					"status":      "approval_required",
-					"instruction": "Call /workflow/approve with the same session_id and a concrete approved agent task.",
+					"approval_id": approval.ID,
+					"instruction": "Call /workflow/approve with approval_id to run the approved code task.",
 				}
 			} else {
 				codePrompt := fmt.Sprintf("Agent: %s\nTask: %s\nPlan:\n%s\nApply safe repository changes and run relevant checks.", name, task, text)
@@ -113,6 +127,24 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 	return RunResult{SessionID: id, Summary: summary, Results: results}, nil
 }
 
+func (e *Engine) ApproveApproval(ctx context.Context, approvalID, engine string) (codeengine.Result, error) {
+	approvalID = strings.TrimSpace(approvalID)
+	if approvalID == "" {
+		return codeengine.Result{}, fmt.Errorf("approval_id is required")
+	}
+	if engine != "" {
+		if _, ok := e.allowedCode[engine]; !ok {
+			return codeengine.Result{}, fmt.Errorf("unsupported code engine: %s", engine)
+		}
+	}
+
+	approval, err := e.consumeApproval(approvalID)
+	if err != nil {
+		return codeengine.Result{}, err
+	}
+	return e.runApprovedTask(ctx, approval.SessionID, approval.Agent, approval.Task, engine)
+}
+
 func (e *Engine) ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
 	if _, ok := e.agentNames[agentName]; !ok {
 		return codeengine.Result{}, fmt.Errorf("unknown agent: %s", agentName)
@@ -122,6 +154,10 @@ func (e *Engine) ApproveAgentTask(ctx context.Context, sessionID, agentName, tas
 			return codeengine.Result{}, fmt.Errorf("unsupported code engine: %s", engine)
 		}
 	}
+	return e.runApprovedTask(ctx, sessionID, agentName, task, engine)
+}
+
+func (e *Engine) runApprovedTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
 	events, err := e.memory.Recall(ctx, sessionID, 20)
 	if err != nil {
 		return codeengine.Result{}, err
@@ -139,6 +175,35 @@ Return changed files, commands run, and risks.`, agentName, task, formatMemory(e
 		err = rememberErr
 	}
 	return result, err
+}
+
+func (e *Engine) createApproval(sessionID, agentName, task string) ApprovalRequest {
+	approval := ApprovalRequest{
+		ID:        "appr_" + newSessionID(),
+		SessionID: sessionID,
+		Agent:     agentName,
+		Task:      task,
+		Status:    "pending",
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.approvals[approval.ID] = approval
+	return approval
+}
+
+func (e *Engine) consumeApproval(id string) (ApprovalRequest, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	approval, ok := e.approvals[id]
+	if !ok {
+		return ApprovalRequest{}, fmt.Errorf("unknown approval_id: %s", id)
+	}
+	if approval.Status != "pending" {
+		return ApprovalRequest{}, fmt.Errorf("approval_id is already used: %s", id)
+	}
+	approval.Status = "used"
+	e.approvals[id] = approval
+	return approval, nil
 }
 
 func (e *Engine) IsKnownAgent(name string) bool {
@@ -182,6 +247,10 @@ Return:
 2. Concrete actions for repository
 3. Risks/blockers
 4. Acceptance checks`, agent.Title, agent.Mission, memoryText, userTask, previous)
+}
+
+func approvedCodeTask(userTask, agentPlan string) string {
+	return fmt.Sprintf("Apply the approved plan for user task:\n%s\n\nApproved agent plan:\n%s", userTask, agentPlan)
 }
 
 func isCodeAgent(name string) bool {

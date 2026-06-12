@@ -17,6 +17,7 @@ import (
 
 type fakeEngine struct {
 	runTask    string
+	approvalID string
 	approve    approveCall
 	approveOut codeengine.Result
 }
@@ -35,6 +36,15 @@ func (f *fakeEngine) RunWorkflow(_ context.Context, task, sessionID string, useC
 
 func (f *fakeEngine) ApproveAgentTask(_ context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
 	f.approve = approveCall{sessionID: sessionID, agent: agentName, task: task, engine: engine}
+	if f.approveOut.Status == "" {
+		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files"}
+	}
+	return f.approveOut, nil
+}
+
+func (f *fakeEngine) ApproveApproval(_ context.Context, approvalID, engine string) (codeengine.Result, error) {
+	f.approvalID = approvalID
+	f.approve.engine = engine
 	if f.approveOut.Status == "" {
 		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files"}
 	}
@@ -104,10 +114,10 @@ func TestHandleApproveRunsCodeEngine(t *testing.T) {
 	engine := &fakeEngine{}
 	bot := testBot(engine, fakeStore{}, client, map[int64]struct{}{7: {}})
 
-	bot.handle(context.Background(), testMessage(7, "/approve session-1 backend implement endpoint"))
+	bot.handle(context.Background(), testMessage(7, "/approve appr_123 codex"))
 
-	if engine.approve.sessionID != "session-1" || engine.approve.agent != "backend" || engine.approve.task != "implement endpoint" {
-		t.Fatalf("unexpected approve call: %#v", engine.approve)
+	if engine.approvalID != "appr_123" || engine.approve.engine != "codex" {
+		t.Fatalf("unexpected approve call: approvalID=%q call=%#v", engine.approvalID, engine.approve)
 	}
 	requireLastMessage(t, client, "changed files")
 }
