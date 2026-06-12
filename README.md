@@ -47,6 +47,8 @@ curl http://localhost:8088/health/live
 curl http://localhost:8088/health/ready
 ```
 
+`/health/ready` проверяет Postgres, доступность workspace и файл конфигурации агентов.
+
 API workflow защищен bearer token из `WEB_AUTH_TOKEN`:
 
 ```bash

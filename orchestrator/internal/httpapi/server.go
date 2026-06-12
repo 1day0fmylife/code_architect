@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -99,6 +100,16 @@ func (s *Server) ready(c *echo.Context) error {
 	ctx := c.Request().Context()
 	if err := s.store.Ping(ctx); err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "database": err.Error()})
+	}
+	if s.cfg.WorkspaceDir != "" {
+		if info, err := os.Stat(s.cfg.WorkspaceDir); err != nil || !info.IsDir() {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "workspace": "unavailable"})
+		}
+	}
+	if s.cfg.AgentsConfigPath != "" {
+		if info, err := os.Stat(s.cfg.AgentsConfigPath); err != nil || info.IsDir() {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "agents_config": "unavailable"})
+		}
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
 }

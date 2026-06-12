@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,6 +170,40 @@ func TestWorkflowApproveUsesApprovalID(t *testing.T) {
 
 func TestReadyReportsStoreFailure(t *testing.T) {
 	s := NewServer(testConfig(), fakeStore{err: errors.New("db down")}, &fakeEngine{})
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadyChecksWorkspaceAndAgentsConfig(t *testing.T) {
+	dir := t.TempDir()
+	agentsPath := filepath.Join(dir, "agents.yaml")
+	if err := os.WriteFile(agentsPath, []byte("workflow: {}\n"), 0o644); err != nil {
+		t.Fatalf("write agents config: %v", err)
+	}
+	cfg := testConfig()
+	cfg.WorkspaceDir = dir
+	cfg.AgentsConfigPath = agentsPath
+	s := NewServer(cfg, fakeStore{}, &fakeEngine{})
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadyReportsMissingWorkspace(t *testing.T) {
+	cfg := testConfig()
+	cfg.WorkspaceDir = filepath.Join(t.TempDir(), "missing")
+	s := NewServer(cfg, fakeStore{}, &fakeEngine{})
 	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
 	rec := httptest.NewRecorder()
 
