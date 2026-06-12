@@ -35,6 +35,7 @@
 - Code engine result включает `changed_files` и `diff_stat` для git workspace.
 - Code engine runs сохраняются в Postgres вместе с approval/session/agent linkage.
 - Workflow runs получают `run_id` и сохраняются в Postgres как `running`/`completed`.
+- Agent steps сохраняются в Postgres с `run_id`, `session_id`, агентом, статусом, анализом, `approval_id` и ошибкой.
 - Frontend-зависимости закреплены точными версиями в `frontend/package.json`.
 - Добавлена минимальная web-консоль с auth-настройкой, health check, workflow run, approval и memory view.
 - Telegram получил `/menu`, `/help`, inline-кнопки и callback-переходы.
@@ -169,12 +170,12 @@
    - `approval_requests`;
    - `code_engine_runs`.
    - `workflow_runs`, `approval_requests` и `code_engine_runs` уже созданы в Postgres-backed storage;
-   - следующий шаг: persisted `agent_steps`.
+   - persisted `agent_steps` уже добавлены.
 2. Approval должен ссылаться на конкретный `approval_request_id`, а не принимать произвольный новый task.
    - `approval_id` уже добавлен;
    - approval state уже хранится в Postgres;
    - approval уже связан с persisted `workflow_runs` через `run_id`;
-   - следующий шаг: связать approval с persisted `agent_steps`.
+   - approval уже связан с persisted `agent_steps` через `approval_id`.
 3. Валидировать:
    - agent входит в конфиг;
    - engine входит в allowlist;

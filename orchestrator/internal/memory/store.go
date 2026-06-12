@@ -33,6 +33,16 @@ type WorkflowRun struct {
 	Status    string `json:"status"`
 }
 
+type AgentStep struct {
+	RunID      string `json:"run_id"`
+	SessionID  string `json:"session_id"`
+	Agent      string `json:"agent"`
+	Status     string `json:"status"`
+	Analysis   string `json:"analysis,omitempty"`
+	ApprovalID string `json:"approval_id,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
 type CodeEngineRun struct {
 	SessionID    string   `json:"session_id"`
 	ApprovalID   string   `json:"approval_id,omitempty"`
@@ -91,6 +101,23 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id ON workflow_runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+    id BIGSERIAL PRIMARY KEY,
+    run_id VARCHAR(128) NOT NULL,
+    session_id VARCHAR(128) NOT NULL,
+    agent VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    analysis TEXT NOT NULL DEFAULT '',
+    approval_id VARCHAR(128),
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_run_id ON agent_steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_session_id ON agent_steps(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_status ON agent_steps(status);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_approval_id ON agent_steps(approval_id);
 
 CREATE TABLE IF NOT EXISTS approval_requests (
     id VARCHAR(128) PRIMARY KEY,
@@ -220,6 +247,25 @@ func (s *Store) CompleteWorkflowRun(ctx context.Context, id, summary string) err
 UPDATE workflow_runs
 SET status = 'completed', summary = $2, completed_at = now()
 WHERE id = $1`, id, summary)
+	return err
+}
+
+func (s *Store) SaveAgentStep(ctx context.Context, step AgentStep) error {
+	if step.Status == "" {
+		step.Status = "completed"
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO agent_steps (
+    run_id, session_id, agent, status, analysis, approval_id, error, completed_at
+) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, now())`,
+		step.RunID,
+		step.SessionID,
+		step.Agent,
+		step.Status,
+		step.Analysis,
+		step.ApprovalID,
+		step.Error,
+	)
 	return err
 }
 

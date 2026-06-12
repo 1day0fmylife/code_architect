@@ -96,18 +96,30 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 		prompt := agentPrompt(agent, task, memoryText, previous)
 		text, err := e.llm.Chat(ctx, prompt, agent.Model, "")
 		if err != nil {
+			_ = e.saveAgentStep(ctx, memory.AgentStep{
+				RunID:     runID,
+				SessionID: id,
+				Agent:     name,
+				Status:    "failed",
+				Error:     err.Error(),
+			})
 			return RunResult{}, fmt.Errorf("%s llm call: %w", name, err)
 		}
 		if err := e.memory.Remember(ctx, id, name, text); err != nil {
 			return RunResult{}, err
 		}
 		result := AgentResult{Agent: name, Analysis: text}
+		stepStatus := "completed"
+		stepApprovalID := ""
+		stepError := ""
 		if useCodeEngine && isCodeAgent(name) {
 			if e.cfg.RequireApprovalForCode {
 				approval, err := e.createApproval(ctx, runID, id, name, approvedCodeTask(task, text))
 				if err != nil {
 					return RunResult{}, err
 				}
+				stepStatus = "approval_required"
+				stepApprovalID = approval.ID
 				result.CodeEngine = map[string]string{
 					"status":      "approval_required",
 					"approval_id": approval.ID,
@@ -119,8 +131,21 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 				result.CodeEngine = codeResult
 				if runErr != nil {
 					result.CodeEngine = codeResult
+					stepStatus = "code_failed"
+					stepError = runErr.Error()
 				}
 			}
+		}
+		if err := e.saveAgentStep(ctx, memory.AgentStep{
+			RunID:      runID,
+			SessionID:  id,
+			Agent:      name,
+			Status:     stepStatus,
+			Analysis:   text,
+			ApprovalID: stepApprovalID,
+			Error:      stepError,
+		}); err != nil {
+			return RunResult{}, err
 		}
 		results = append(results, result)
 		previous += fmt.Sprintf("\n\n## %s\n%s", name, text)
@@ -283,6 +308,13 @@ func (e *Engine) completeWorkflowRun(ctx context.Context, runID, summary string)
 		return nil
 	}
 	return e.memory.CompleteWorkflowRun(ctx, runID, summary)
+}
+
+func (e *Engine) saveAgentStep(ctx context.Context, step memory.AgentStep) error {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.SaveAgentStep(ctx, step)
 }
 
 func (e *Engine) IsKnownAgent(name string) bool {

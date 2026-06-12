@@ -60,7 +60,7 @@ curl -X POST http://localhost:8088/workflow/run \
   -d '{"task":"Добавь Go/Echo endpoint /healthz и тесты", "use_code_engine": true}'
 ```
 
-Ответ `/workflow/run` содержит `run_id` и `session_id`. `run_id` сохраняется в Postgres в `workflow_runs` и связывает последующие approval/code-engine records.
+Ответ `/workflow/run` содержит `run_id` и `session_id`. `run_id` сохраняется в Postgres в `workflow_runs` и связывает последующие `agent_steps`, approval/code-engine records.
 
 По умолчанию `REQUIRE_APPROVAL_FOR_CODE=true`, поэтому backend/frontend/security/QA только подготовят план и вернут `approval_id`. Для запуска кодового агента используй этот `approval_id`:
 
