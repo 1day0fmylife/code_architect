@@ -98,7 +98,10 @@ func (e *Engine) RunWorkflow(ctx context.Context, task, sessionID string, useCod
 		result := AgentResult{Agent: name, Analysis: text}
 		if useCodeEngine && isCodeAgent(name) {
 			if e.cfg.RequireApprovalForCode {
-				approval := e.createApproval(id, name, approvedCodeTask(task, text))
+				approval, err := e.createApproval(ctx, id, name, approvedCodeTask(task, text))
+				if err != nil {
+					return RunResult{}, err
+				}
 				result.CodeEngine = map[string]string{
 					"status":      "approval_required",
 					"approval_id": approval.ID,
@@ -138,7 +141,7 @@ func (e *Engine) ApproveApproval(ctx context.Context, approvalID, engine string)
 		}
 	}
 
-	approval, err := e.consumeApproval(approvalID)
+	approval, err := e.consumeApproval(ctx, approvalID)
 	if err != nil {
 		return codeengine.Result{}, err
 	}
@@ -177,7 +180,7 @@ Return changed files, commands run, and risks.`, agentName, task, formatMemory(e
 	return result, err
 }
 
-func (e *Engine) createApproval(sessionID, agentName, task string) ApprovalRequest {
+func (e *Engine) createApproval(ctx context.Context, sessionID, agentName, task string) (ApprovalRequest, error) {
 	approval := ApprovalRequest{
 		ID:        "appr_" + newSessionID(),
 		SessionID: sessionID,
@@ -185,13 +188,36 @@ func (e *Engine) createApproval(sessionID, agentName, task string) ApprovalReque
 		Task:      task,
 		Status:    "pending",
 	}
+	if e.memory != nil {
+		err := e.memory.SaveApproval(ctx, memory.ApprovalRequest{
+			ID:        approval.ID,
+			SessionID: approval.SessionID,
+			Agent:     approval.Agent,
+			Task:      approval.Task,
+			Status:    approval.Status,
+		})
+		return approval, err
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.approvals[approval.ID] = approval
-	return approval
+	return approval, nil
 }
 
-func (e *Engine) consumeApproval(id string) (ApprovalRequest, error) {
+func (e *Engine) consumeApproval(ctx context.Context, id string) (ApprovalRequest, error) {
+	if e.memory != nil {
+		approval, err := e.memory.ConsumeApproval(ctx, id)
+		if err != nil {
+			return ApprovalRequest{}, fmt.Errorf("unknown or already used approval_id: %s", id)
+		}
+		return ApprovalRequest{
+			ID:        approval.ID,
+			SessionID: approval.SessionID,
+			Agent:     approval.Agent,
+			Task:      approval.Task,
+			Status:    approval.Status,
+		}, nil
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	approval, ok := e.approvals[id]

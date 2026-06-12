@@ -67,6 +67,8 @@ curl -X POST http://localhost:8088/workflow/approve \
   -d '{"approval_id":"<approval_id>","engine":"opencode"}'
 ```
 
+Approval requests сохраняются в Postgres и не теряются при рестарте `hermes-brain`. Каждый `approval_id` можно использовать только один раз.
+
 Просмотр памяти:
 
 ```bash
@@ -284,6 +286,7 @@ codex exec <prompt>
 
 - HTTP workflow API защищен bearer token из `WEB_AUTH_TOKEN`.
 - Кодовые изменения требуют явного `/approve`.
+- `approval_id` хранится в Postgres и одноразово переводится из `pending` в `used`.
 - Telegram ограничивается `TELEGRAM_ALLOWED_USER_IDS`.
 - Репозиторий монтируется только в `/workspace`.
 - OpenCode/Codex запускаются внутри контейнера.

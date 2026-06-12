@@ -15,6 +15,14 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type ApprovalRequest struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	Task      string `json:"task"`
+	Status    string `json:"status"`
+}
+
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -47,6 +55,18 @@ CREATE TABLE IF NOT EXISTS memory_events (
 CREATE INDEX IF NOT EXISTS idx_memory_events_session_id ON memory_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_memory_events_role ON memory_events(role);
 CREATE INDEX IF NOT EXISTS idx_memory_events_created_at ON memory_events(created_at);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id VARCHAR(128) PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL,
+    agent VARCHAR(64) NOT NULL,
+    task TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    consumed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_session_id ON approval_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
 `)
 	return err
 }
@@ -94,4 +114,28 @@ ORDER BY id ASC`, sessionID, limit)
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+func (s *Store) SaveApproval(ctx context.Context, approval ApprovalRequest) error {
+	if approval.Status == "" {
+		approval.Status = "pending"
+	}
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO approval_requests (id, session_id, agent, task, status)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO NOTHING`,
+		approval.ID, approval.SessionID, approval.Agent, approval.Task, approval.Status,
+	)
+	return err
+}
+
+func (s *Store) ConsumeApproval(ctx context.Context, id string) (ApprovalRequest, error) {
+	var approval ApprovalRequest
+	err := s.pool.QueryRow(ctx, `
+UPDATE approval_requests
+SET status = 'used', consumed_at = now()
+WHERE id = $1 AND status = 'pending'
+RETURNING id, session_id, agent, task, status`, id).
+		Scan(&approval.ID, &approval.SessionID, &approval.Agent, &approval.Task, &approval.Status)
+	return approval, err
 }
