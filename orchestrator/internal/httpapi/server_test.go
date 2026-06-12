@@ -214,6 +214,41 @@ func TestReadyReportsMissingWorkspace(t *testing.T) {
 	}
 }
 
+func TestReadyReportsRedisFailure(t *testing.T) {
+	cfg := testConfig()
+	cfg.RedisURL = "://bad-url"
+	s := NewServer(cfg, fakeStore{}, &fakeEngine{})
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "redis") {
+		t.Fatalf("expected redis failure, got %s", rec.Body.String())
+	}
+}
+
+func TestReadyReportsLLMFailure(t *testing.T) {
+	cfg := testConfig()
+	cfg.DefaultLLMBackend = "ollama"
+	cfg.OllamaBaseURL = "http://127.0.0.1:1"
+	s := NewServer(cfg, fakeStore{}, &fakeEngine{})
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+
+	s.echo.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "llm") {
+		t.Fatalf("expected llm failure, got %s", rec.Body.String())
+	}
+}
+
 func newTestServer() *Server {
 	return NewServer(testConfig(), fakeStore{}, &fakeEngine{})
 }

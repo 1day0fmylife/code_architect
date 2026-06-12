@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -116,7 +119,87 @@ func (s *Server) ready(c *echo.Context) error {
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "agents_config": "unavailable"})
 		}
 	}
+	if err := s.checkRedis(ctx); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "redis": err.Error()})
+	}
+	if err := s.checkLLM(ctx); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "error", "llm": err.Error()})
+	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (s *Server) checkRedis(ctx context.Context) error {
+	if s.cfg.RedisURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(s.cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("invalid redis url")
+	}
+	host := parsed.Host
+	if !strings.Contains(host, ":") {
+		host = net.JoinHostPort(host, "6379")
+	}
+	dialer := net.Dialer{Timeout: 800 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(800 * time.Millisecond)
+	_ = conn.SetDeadline(deadline)
+	if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
+		return err
+	}
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(string(buf[:n]), "+PONG") {
+		return fmt.Errorf("unexpected ping response")
+	}
+	return nil
+}
+
+func (s *Server) checkLLM(ctx context.Context) error {
+	backend := strings.TrimSpace(s.cfg.DefaultLLMBackend)
+	if backend == "" {
+		return nil
+	}
+
+	var endpoint string
+	switch backend {
+	case "ollama":
+		if s.cfg.OllamaBaseURL == "" {
+			return fmt.Errorf("ollama base url is empty")
+		}
+		endpoint = strings.TrimRight(s.cfg.OllamaBaseURL, "/") + "/api/tags"
+	case "llamacpp":
+		if s.cfg.LlamaCPPBaseURL == "" {
+			return fmt.Errorf("llamacpp base url is empty")
+		}
+		endpoint = strings.TrimRight(s.cfg.LlamaCPPBaseURL, "/") + "/models"
+	default:
+		return nil
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 1500 * time.Millisecond}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s returned %s", backend, resp.Status)
+	}
+	return nil
 }
 
 func (s *Server) workflowRun(c *echo.Context) error {

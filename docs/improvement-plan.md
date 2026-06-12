@@ -44,6 +44,7 @@
 - Frontend получил отдельный multi-stage Dockerfile.
 - Threat model зафиксирован в `docs/threat-model.md`.
 - `/health/ready` проверяет Postgres, workspace и agents config.
+- `/health/ready` проверяет Postgres, Redis, текущий LLM backend, workspace и agents config.
 - `.env.example` и `.dockerignore` усилены для безопасного локального запуска и Docker build context.
 - `make check` запускает `gofmt`-проверку, `go vet` и Go-тесты.
 - В compose наружу публикуется только `hermes-brain:8088`; инфраструктурные сервисы остаются внутри Docker network.
@@ -262,7 +263,7 @@
 3. Health endpoints:
    - `/health/live`;
    - `/health/ready` с проверками Postgres, Redis, workspace, LLM backend.
-   - Postgres, workspace и agents config уже проверяются.
+   - Postgres, Redis, текущий LLM backend, workspace и agents config уже проверяются.
 4. Docker hardening:
    - non-root уже есть, сохранить;
    - убрать `npm install ... || true` или вынести CLI в отдельный проверяемый слой;
@@ -314,6 +315,7 @@
 1. Добавить CI для `make check`.
 2. Валидировать session/run linkage после введения `workflow_runs`.
 3. Добавить Redis/LLM checks в `/health/ready`.
+   - уже добавлено.
 4. Добавить persisted `workflow_runs` и `agent_steps`.
 5. Расширить маскировку секретов в stdout/stderr.
 6. Сохранять `returncode != 0` как ошибочный статус в persisted code run metadata.
