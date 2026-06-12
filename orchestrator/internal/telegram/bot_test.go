@@ -55,17 +55,23 @@ type fakeStore struct {
 	events []memory.Event
 }
 
+func (f fakeStore) Ping(context.Context) error {
+	return nil
+}
+
 func (f fakeStore) Recall(context.Context, string, int) ([]memory.Event, error) {
 	return f.events, nil
 }
 
 type sentMessage struct {
-	ChatID string `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID      string                `json:"chat_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup"`
 }
 
 type fakeHTTPClient struct {
-	messages []sentMessage
+	messages  []sentMessage
+	callbacks int
 }
 
 func (f *fakeHTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -75,6 +81,9 @@ func (f *fakeHTTPClient) Do(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		f.messages = append(f.messages, msg)
+	}
+	if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/answerCallbackQuery") {
+		f.callbacks++
 	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -109,6 +118,35 @@ func TestHandleTaskRunsWorkflow(t *testing.T) {
 	requireLastMessage(t, client, "session_id: session-1")
 }
 
+func TestHandleStartSendsMenuKeyboard(t *testing.T) {
+	client := &fakeHTTPClient{}
+	bot := testBot(&fakeEngine{}, fakeStore{}, client, map[int64]struct{}{7: {}})
+
+	bot.handle(context.Background(), testMessage(7, "/start"))
+
+	requireLastMessage(t, client, "Hermes/OpenCode team ready")
+	if client.messages[len(client.messages)-1].ReplyMarkup == nil {
+		t.Fatal("expected menu keyboard")
+	}
+}
+
+func TestHandleCallbackShowsTaskPrompt(t *testing.T) {
+	client := &fakeHTTPClient{}
+	bot := testBot(&fakeEngine{}, fakeStore{}, client, map[int64]struct{}{7: {}})
+
+	bot.handleCallback(context.Background(), CallbackQuery{
+		ID:      "callback-1",
+		Data:    "task:prompt",
+		From:    User{ID: 7},
+		Message: Message{Chat: Chat{ID: 100}},
+	})
+
+	if client.callbacks != 1 {
+		t.Fatalf("expected callback answer, got %d", client.callbacks)
+	}
+	requireLastMessage(t, client, "/task <description>")
+}
+
 func TestHandleApproveRunsCodeEngine(t *testing.T) {
 	client := &fakeHTTPClient{}
 	engine := &fakeEngine{}
@@ -136,6 +174,15 @@ func TestHandleMemoryPrintsEvents(t *testing.T) {
 	bot.handle(context.Background(), testMessage(7, "/memory session-1"))
 
 	requireLastMessage(t, client, "architect: plan")
+}
+
+func TestHandleStatusPingsStore(t *testing.T) {
+	client := &fakeHTTPClient{}
+	bot := testBot(&fakeEngine{}, fakeStore{}, client, map[int64]struct{}{7: {}})
+
+	bot.handle(context.Background(), testMessage(7, "/status"))
+
+	requireLastMessage(t, client, "Database: ok")
 }
 
 func testBot(engine *fakeEngine, store fakeStore, client *fakeHTTPClient, allowed map[int64]struct{}) *Bot {

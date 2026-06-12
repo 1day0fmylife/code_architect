@@ -38,7 +38,7 @@ docker compose up -d --build
 docker compose exec ollama ollama pull qwen2.5-coder:7b
 ```
 
-По умолчанию наружу публикуется только `hermes-brain` на `8088`. Postgres, Redis, Ollama и llama.cpp доступны сервисам внутри Docker network; если нужен доступ с хоста, добавь нужные `ports` в `docker-compose.yml`.
+По умолчанию наружу публикуются `hermes-brain` на `8088` и web-консоль на `5173`. Postgres, Redis, Ollama и llama.cpp доступны сервисам внутри Docker network; если нужен доступ с хоста, добавь нужные `ports` в `docker-compose.yml`.
 
 Проверка live/readiness:
 
@@ -125,10 +125,24 @@ docker compose logs -f hermes-brain
 Команды:
 
 ```text
-/start
-/task <описание задачи>
-/approve <approval_id> [opencode|codex]
-/memory <session_id>
+/start - открыть главное меню
+/menu - открыть главное меню
+/help - показать команды
+/status - показать состояние бота и БД
+/task <описание задачи> - запустить workflow агентов
+/approve <approval_id> [opencode|codex] - выполнить approved code-engine задачу
+/memory <session_id> - показать последние события памяти
+```
+
+Бот также показывает inline-кнопки:
+
+```text
+New task - подсказка для /task
+Approve - подсказка для /approve
+Memory - подсказка для /memory
+Status - состояние бота и БД
+Help - список команд
+Menu - возврат в главное меню
 ```
 
 Telegram-команды вызывают workflow напрямую внутри `hermes-brain`, поэтому `WEB_AUTH_TOKEN` нужен только для HTTP API.
@@ -140,6 +154,35 @@ Telegram-команды вызывают workflow напрямую внутри 
 3. Если задача требует кода, возьми `approval_id` из ответа и выполни `/approve <approval_id>`.
 
 Не добавляй bot token в задачи, prompt, issue или сообщения агентам: code engine stdout/stderr маскируется частично, но секреты лучше не передавать в workflow вообще.
+
+Если бот не отвечает:
+
+```bash
+docker compose ps
+docker compose logs -f hermes-brain
+```
+
+Проверь, что `hermes-brain` запущен, `TELEGRAM_BOT_TOKEN` не пустой, твой user id входит в `TELEGRAM_ALLOWED_USER_IDS`, а в логах нет ошибок Telegram API. При старте polling бот вызывает `deleteWebhook`, поэтому старый webhook не должен блокировать `getUpdates`.
+
+## Web-консоль
+
+Frontend находится в `frontend/` и использует тот же `WEB_AUTH_TOKEN`, что HTTP API.
+
+Локальный запуск:
+
+```bash
+cd frontend
+bun install --frozen-lockfile
+bun run dev
+```
+
+Docker-запуск:
+
+```bash
+docker compose up -d --build frontend
+```
+
+Открой `http://localhost:5173`, укажи API URL `http://localhost:8088` и значение `WEB_AUTH_TOKEN`. Консоль умеет проверять health endpoints, запускать `/workflow/run`, выполнять `/workflow/approve` и читать `/memory/<session_id>`.
 
 ## Go-разработка
 
@@ -244,7 +287,7 @@ DEFAULT_MODEL=local-model
 
 ## OpenCode/Codex
 
-В Docker image CLI ставятся через npm:
+В Docker image CLI ставятся через npm в отдельном `code-engine-cli` stage, поэтому слой с `opencode-ai` и `@openai/codex` кэшируется отдельно от сборки Go-бинаря:
 
 ```text
 npm install -g opencode-ai @openai/codex

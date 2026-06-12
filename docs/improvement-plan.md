@@ -8,11 +8,12 @@
 Проект представляет собой ранний self-hosted каркас мультиагентной разработки:
 
 - Go/Echo v5-сервис `hermes-brain` принимает задачи, запускает цепочку агентов и хранит события в Postgres.
-- Telegram-бот дает операторский интерфейс для `/task`, `/approve` и `/memory`.
+- Telegram-бот дает операторский интерфейс для `/task`, `/approve`, `/memory`, `/status`, меню и inline-кнопок.
+- Минимальная web-консоль запускает workflow, approve и memory-запросы через bearer token.
 - Адаптеры LLM поддерживают Ollama и llama.cpp.
 - Кодовый исполнитель вызывает OpenCode или Codex CLI внутри контейнера и работает в смонтированном `/workspace`.
 - Конфигурация агентов вынесена в `config/agents.yaml`.
-- Docker Compose поднимает orchestrator, Telegram bot, Postgres с pgvector, Redis, Ollama и опциональный llama.cpp.
+- Docker Compose поднимает orchestrator, frontend, Postgres с pgvector, Redis, Ollama и опциональный llama.cpp.
 - Web/API endpoints защищены bearer token, кроме health endpoints; dev-mode без auth управляется явной настройкой.
 
 Главный вывод: архитектура понятная и расширяемая, но проект пока ближе к прототипу. Самые важные зоны улучшения: безопасность исполнения кода, наблюдаемость, тесты, устойчивость workflow, управление схемой БД и полноценная память.
@@ -34,6 +35,13 @@
 - Code engine result включает `changed_files` и `diff_stat` для git workspace.
 - Code engine runs сохраняются в Postgres вместе с approval/session/agent linkage.
 - Workflow runs получают `run_id` и сохраняются в Postgres как `running`/`completed`.
+- Frontend-зависимости закреплены точными версиями в `frontend/package.json`.
+- Добавлена минимальная web-консоль с auth-настройкой, health check, workflow run, approval и memory view.
+- Telegram получил `/menu`, `/help`, inline-кнопки и callback-переходы.
+- Telegram получил `/status` для быстрой проверки состояния бота и БД.
+- Telegram polling очищает webhook перед `getUpdates` и возвращает ошибку при `ok:false` от Telegram API.
+- Dockerfile orchestrator разделен на `runtime-base`, `code-engine-cli` и `runtime` stages для кэширования установки OpenCode/Codex CLI.
+- Frontend получил отдельный multi-stage Dockerfile.
 - Threat model зафиксирован в `docs/threat-model.md`.
 - `/health/ready` проверяет Postgres, workspace и agents config.
 - `.env.example` и `.dockerignore` усилены для безопасного локального запуска и Docker build context.
@@ -95,7 +103,7 @@
 
 ### 6. UX оператора
 
-- Telegram-команды минимальны и не показывают прогресс по агентам.
+- Telegram-команды уже имеют меню и inline-кнопки, но пока не показывают прогресс по агентам.
 - Approval требует вручную повторять задачу, что повышает риск выполнить не тот prompt.
 - Нет веб-интерфейса, истории workflow, diff preview, approve/reject по конкретным proposed changes.
 
@@ -258,7 +266,9 @@
 4. Docker hardening:
    - non-root уже есть, сохранить;
    - убрать `npm install ... || true` или вынести CLI в отдельный проверяемый слой;
-   - pin npm versions;
+   - code-engine CLI уже вынесены в отдельный Docker stage;
+   - frontend npm/bun package versions уже закреплены;
+   - следующий шаг: закрепить версии `opencode-ai` и `@openai/codex`;
    - добавить image build validation.
 5. Secret hygiene:
    - улучшить `.env.example`;
@@ -277,10 +287,11 @@
 Цель: сделать управление удобным, а не только технически возможным.
 
 1. Добавить простой web UI:
-   - список runs;
-   - детали шагов;
-   - memory view;
-   - approval queue;
+   - минимальная web-консоль уже добавлена;
+   - следующий шаг: список runs;
+   - следующий шаг: детали шагов;
+   - memory view уже есть в минимальном виде;
+   - следующий шаг: approval queue;
    - diff preview;
    - approve/reject.
 2. Git integration:
@@ -332,7 +343,8 @@
 5. Async workflow PR:
    - Redis-backed jobs;
    - status endpoints;
-   - Telegram `/status`.
+   - Telegram `/status` уже добавлен;
+   - следующий шаг: Telegram `/cancel`.
 6. Ops baseline PR:
    - backup/restore runbook;
    - retention settings;

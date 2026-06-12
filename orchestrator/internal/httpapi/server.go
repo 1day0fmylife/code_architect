@@ -54,6 +54,11 @@ func NewServer(cfg config.Config, store MemoryStore, engine WorkflowEngine) *Ser
 	e.Use(middleware.Recover())
 	e.Use(middleware.RequestID())
 	e.Use(middleware.RequestLogger())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderAuthorization, echo.HeaderContentType},
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{echo: e, cfg: cfg, store: store, engine: engine, ctx: ctx, cancel: cancel}
