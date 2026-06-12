@@ -37,7 +37,7 @@ func (f *fakeEngine) RunWorkflow(_ context.Context, task, sessionID string, useC
 func (f *fakeEngine) ApproveAgentTask(_ context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
 	f.approve = approveCall{sessionID: sessionID, agent: agentName, task: task, engine: engine}
 	if f.approveOut.Status == "" {
-		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files"}
+		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files", ChangedFiles: []string{"README.md"}}
 	}
 	return f.approveOut, nil
 }
@@ -46,7 +46,7 @@ func (f *fakeEngine) ApproveApproval(_ context.Context, approvalID, engine strin
 	f.approvalID = approvalID
 	f.approve.engine = engine
 	if f.approveOut.Status == "" {
-		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files"}
+		f.approveOut = codeengine.Result{Status: "ok", Stdout: "changed files", ChangedFiles: []string{"README.md"}}
 	}
 	return f.approveOut, nil
 }
@@ -120,6 +120,7 @@ func TestHandleApproveRunsCodeEngine(t *testing.T) {
 		t.Fatalf("unexpected approve call: approvalID=%q call=%#v", engine.approvalID, engine.approve)
 	}
 	requireLastMessage(t, client, "changed files")
+	requireLastMessage(t, client, "README.md")
 }
 
 func TestHandleMemoryPrintsEvents(t *testing.T) {

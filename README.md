@@ -74,6 +74,8 @@ curl http://localhost:8088/memory/<session_id> \
   -H "Authorization: Bearer $HERMES_TOKEN"
 ```
 
+Ответ code engine включает `changed_files` и `diff_stat`, если запуск выполнялся внутри git-репозитория. Эти поля помогают оператору быстро понять, что изменил OpenCode/Codex, до отдельного просмотра diff.
+
 Для локальной разработки можно временно отключить API auth:
 
 ```env
@@ -286,6 +288,7 @@ codex exec <prompt>
 - Репозиторий монтируется только в `/workspace`.
 - OpenCode/Codex запускаются внутри контейнера.
 - stdout/stderr code engine проходят базовую redaction-маскировку токенов и паролей.
+- Ответ code engine включает список измененных файлов и `git diff --stat`, когда workspace является git-репозиторием.
 - Секреты не хранятся в памяти явно; не передавай `.env` и токены в задачи.
 
 ## Что доработать для production

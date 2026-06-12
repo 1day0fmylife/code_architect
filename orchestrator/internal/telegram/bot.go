@@ -136,6 +136,12 @@ func (b *Bot) handle(ctx context.Context, msg Message) {
 		if output == "" {
 			output = fmt.Sprintf("%+v", result)
 		}
+		if len(result.ChangedFiles) > 0 {
+			output += "\n\nChanged files:\n" + strings.Join(result.ChangedFiles, "\n")
+		}
+		if result.DiffStat != "" {
+			output += "\n\nDiff stat:\n" + result.DiffStat
+		}
 		_ = b.send(ctx, msg.Chat.ID, limit(output, 3500))
 	case strings.HasPrefix(text, "/memory"):
 		sessionID := strings.TrimSpace(strings.TrimPrefix(text, "/memory"))

@@ -30,6 +30,7 @@
   - HTTP API auth/validation/health contract.
   - Telegram command handling and allowlist checks.
 - Approval flow теперь выдает `approval_id`, а HTTP/Telegram approve используют его вместо произвольного повторного task.
+- Code engine result включает `changed_files` и `diff_stat` для git workspace.
 - `make check` запускает `gofmt`-проверку, `go vet` и Go-тесты.
 - В compose наружу публикуется только `hermes-brain:8088`; инфраструктурные сервисы остаются внутри Docker network.
 
@@ -168,6 +169,8 @@
    - опциональное отключение network для code engine;
    - redaction секретов в stdout/stderr.
 5. Сохранять diff и список измененных файлов после code-engine run.
+   - `changed_files` и `diff_stat` уже возвращаются в API/Telegram result;
+   - следующий шаг: сохранять эти поля в `code_engine_runs` в Postgres.
 6. Добавить prompt hardening:
    - system/developer instructions для code engine не должны смешиваться с untrusted repository content;
    - явно маркировать memory, user task, repo snippets и tool output;
