@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,6 +22,20 @@ type ApprovalRequest struct {
 	Agent     string `json:"agent"`
 	Task      string `json:"task"`
 	Status    string `json:"status"`
+}
+
+type CodeEngineRun struct {
+	SessionID    string   `json:"session_id"`
+	ApprovalID   string   `json:"approval_id,omitempty"`
+	Agent        string   `json:"agent"`
+	Engine       string   `json:"engine"`
+	Command      string   `json:"cmd"`
+	ReturnCode   int      `json:"returncode"`
+	Status       string   `json:"status"`
+	Stdout       string   `json:"stdout"`
+	Stderr       string   `json:"stderr"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	DiffStat     string   `json:"diff_stat,omitempty"`
 }
 
 type Store struct {
@@ -67,6 +82,25 @@ CREATE TABLE IF NOT EXISTS approval_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_approval_requests_session_id ON approval_requests(session_id);
 CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+
+CREATE TABLE IF NOT EXISTS code_engine_runs (
+    id BIGSERIAL PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL,
+    approval_id VARCHAR(128),
+    agent VARCHAR(64) NOT NULL,
+    engine VARCHAR(32) NOT NULL,
+    command TEXT NOT NULL,
+    return_code INTEGER NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    stdout TEXT NOT NULL,
+    stderr TEXT NOT NULL,
+    changed_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+    diff_stat TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_code_engine_runs_session_id ON code_engine_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_code_engine_runs_approval_id ON code_engine_runs(approval_id);
+CREATE INDEX IF NOT EXISTS idx_code_engine_runs_status ON code_engine_runs(status);
 `)
 	return err
 }
@@ -138,4 +172,29 @@ WHERE id = $1 AND status = 'pending'
 RETURNING id, session_id, agent, task, status`, id).
 		Scan(&approval.ID, &approval.SessionID, &approval.Agent, &approval.Task, &approval.Status)
 	return approval, err
+}
+
+func (s *Store) SaveCodeEngineRun(ctx context.Context, run CodeEngineRun) error {
+	changedFiles, err := json.Marshal(run.ChangedFiles)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+INSERT INTO code_engine_runs (
+    session_id, approval_id, agent, engine, command, return_code, status,
+    stdout, stderr, changed_files, diff_stat
+) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
+		run.SessionID,
+		run.ApprovalID,
+		run.Agent,
+		run.Engine,
+		run.Command,
+		run.ReturnCode,
+		run.Status,
+		run.Stdout,
+		run.Stderr,
+		string(changedFiles),
+		run.DiffStat,
+	)
+	return err
 }

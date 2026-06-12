@@ -32,6 +32,8 @@
 - Approval flow теперь выдает `approval_id`, а HTTP/Telegram approve используют его вместо произвольного повторного task.
 - Approval requests сохраняются в Postgres и одноразово потребляются из `pending` в `used`.
 - Code engine result включает `changed_files` и `diff_stat` для git workspace.
+- Code engine runs сохраняются в Postgres вместе с approval/session/agent linkage.
+- Threat model зафиксирован в `docs/threat-model.md`.
 - `make check` запускает `gofmt`-проверку, `go vet` и Go-тесты.
 - В compose наружу публикуется только `hermes-brain:8088`; инфраструктурные сервисы остаются внутри Docker network.
 
@@ -173,11 +175,12 @@
    - redaction секретов в stdout/stderr.
 5. Сохранять diff и список измененных файлов после code-engine run.
    - `changed_files` и `diff_stat` уже возвращаются в API/Telegram result;
-   - следующий шаг: сохранять эти поля в `code_engine_runs` в Postgres.
+   - эти поля уже сохраняются в `code_engine_runs` в Postgres.
 6. Добавить prompt hardening:
    - system/developer instructions для code engine не должны смешиваться с untrusted repository content;
    - явно маркировать memory, user task, repo snippets и tool output;
    - запрещать агенту следовать инструкциям из workspace-файлов, если они противоречат operator policy.
+   - базовый threat model уже добавлен в `docs/threat-model.md`.
 
 Критерий готовности: невозможно запустить произвольную approved-задачу вне созданного workflow; оператор видит diff/команды перед финальным принятием.
 
@@ -290,35 +293,34 @@
 
 Эти задачи можно сделать первыми за короткое время:
 
-1. Добавить `make check` и минимальный pytest suite.
-2. Валидировать `agent` и `engine` в `/workflow/approve`.
+1. Добавить CI для `make check`.
+2. Валидировать session/run linkage после введения `workflow_runs`.
 3. Разделить `/health/live` и `/health/ready`.
-4. Перейти на FastAPI lifespan.
-5. Добавить безопасную маскировку секретов в stdout/stderr.
-6. Сохранять `returncode != 0` как ошибочный статус, а не просто как поле результата.
+4. Добавить persisted `workflow_runs` и `agent_steps`.
+5. Расширить маскировку секретов в stdout/stderr.
+6. Сохранять `returncode != 0` как ошибочный статус в persisted code run metadata.
 7. Добавить `.dockerignore`.
 8. Усилить `.env.example`: заменить демонстрационный пароль на `change-me`, добавить комментарии.
-9. Добавить простой bearer-token auth для API.
-10. Создать `docs/threat-model.md` для prompt injection, sandbox escape и secret leakage.
+9. Добавить роли/scopes поверх bearer-token auth.
+10. Добавить path allowlist для code engine.
 
 ## Предлагаемый порядок ближайшей реализации
 
 1. Foundation PR:
-   - pytest/ruff;
+   - Go tests;
    - `make check`;
    - tests for config, API health, engine validation;
    - minimal API auth skeleton;
    - initial threat model document.
 2. API hardening PR:
-   - Pydantic validators/enums для `agent` и `engine`;
+   - typed validators/enums для `agent` и `engine`;
    - централизованные ошибки;
    - redaction helper.
 3. Runtime health PR:
-   - lifespan;
    - readiness checks;
    - Dockerfile install validation.
 4. Persistence PR:
-   - Alembic;
+   - migrate;
    - workflow/approval/code-run tables.
 5. Async workflow PR:
    - Redis-backed jobs;

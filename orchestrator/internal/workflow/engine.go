@@ -145,7 +145,7 @@ func (e *Engine) ApproveApproval(ctx context.Context, approvalID, engine string)
 	if err != nil {
 		return codeengine.Result{}, err
 	}
-	return e.runApprovedTask(ctx, approval.SessionID, approval.Agent, approval.Task, engine)
+	return e.runApprovedTask(ctx, approval.ID, approval.SessionID, approval.Agent, approval.Task, engine)
 }
 
 func (e *Engine) ApproveAgentTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
@@ -157,10 +157,10 @@ func (e *Engine) ApproveAgentTask(ctx context.Context, sessionID, agentName, tas
 			return codeengine.Result{}, fmt.Errorf("unsupported code engine: %s", engine)
 		}
 	}
-	return e.runApprovedTask(ctx, sessionID, agentName, task, engine)
+	return e.runApprovedTask(ctx, "", sessionID, agentName, task, engine)
 }
 
-func (e *Engine) runApprovedTask(ctx context.Context, sessionID, agentName, task, engine string) (codeengine.Result, error) {
+func (e *Engine) runApprovedTask(ctx context.Context, approvalID, sessionID, agentName, task, engine string) (codeengine.Result, error) {
 	events, err := e.memory.Recall(ctx, sessionID, 20)
 	if err != nil {
 		return codeengine.Result{}, err
@@ -174,10 +174,32 @@ Context/memory:
 Work inside repository. Prefer minimal diffs. Run tests/checks when available.
 Return changed files, commands run, and risks.`, agentName, task, formatMemory(events))
 	result, err := e.code.Run(ctx, prompt, engine)
+	if saveErr := e.saveCodeEngineRun(ctx, approvalID, sessionID, agentName, result); saveErr != nil && err == nil {
+		err = saveErr
+	}
 	if rememberErr := e.memory.Remember(ctx, sessionID, agentName+":code_engine", fmt.Sprintf("%+v", result)); rememberErr != nil && err == nil {
 		err = rememberErr
 	}
 	return result, err
+}
+
+func (e *Engine) saveCodeEngineRun(ctx context.Context, approvalID, sessionID, agentName string, result codeengine.Result) error {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.SaveCodeEngineRun(ctx, memory.CodeEngineRun{
+		SessionID:    sessionID,
+		ApprovalID:   approvalID,
+		Agent:        agentName,
+		Engine:       result.Engine,
+		Command:      result.Command,
+		ReturnCode:   result.ReturnCode,
+		Status:       result.Status,
+		Stdout:       result.Stdout,
+		Stderr:       result.Stderr,
+		ChangedFiles: result.ChangedFiles,
+		DiffStat:     result.DiffStat,
+	})
 }
 
 func (e *Engine) createApproval(ctx context.Context, sessionID, agentName, task string) (ApprovalRequest, error) {
